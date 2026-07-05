@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="Demo/LoggerDemo.csproj" />
+  <Project Path="Logger/Labworx.csproj" />
+</Solution>
