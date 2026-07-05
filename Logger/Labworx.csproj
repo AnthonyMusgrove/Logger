@@ -4,6 +4,44 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+    <PackageId>labworx.logger</PackageId>
+    <Title>Labworx Logger Suite</Title>
+    <Authors>Anthony Musgrove</Authors>
+    <Product>Labworx Logger Suite</Product>
+    <Description>A lightweight, high-performance C# file logging library with automatic log rotation, retention management, and flexible timestamp formatting.</Description>
+    <PackageProjectUrl>https://github.com/AnthonyMusgrove/Logger</PackageProjectUrl>
+    <PackageIcon>nuget_icon.png</PackageIcon>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/AnthonyMusgrove/Logger</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>logging; log; logger;</PackageTags>
+    <PackageReleaseNotes>Initial release of Labworx Logger</PackageReleaseNotes>
+    <NeutralLanguage>en-AU</NeutralLanguage>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
   </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\LICENSE">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="..\nuget_icon.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Include="..\README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="LoggerIcon.png">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+  </ItemGroup>
 
 </Project>

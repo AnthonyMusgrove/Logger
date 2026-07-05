@@ -373,7 +373,7 @@
       "version": "1.0.0",
       "restore": {
         "projectUniqueName": "C:\\Users\\User\\source\\repos\\Logger\\Logger\\Labworx.csproj",
-        "projectName": "Labworx",
+        "projectName": "labworx.logger",
         "projectPath": "C:\\Users\\User\\source\\repos\\Logger\\Logger\\Labworx.csproj",
         "packagesPath": "C:\\Users\\User\\.nuget\\packages\\",
         "outputPath": "C:\\Users\\User\\source\\repos\\Logger\\Logger\\obj\\",
