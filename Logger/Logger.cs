@@ -1,5 +1,6 @@
 ﻿using Labworx.Extensions;
 using Labworx.Util;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using System.Reflection;
 using System.Text;
 using static System.Environment;
@@ -46,7 +47,48 @@ namespace Labworx
 
             if (this._options.autoRoute)
             {
-                this.LogFilePath = Environment.GetFolderPath(SpecialFolder.UserProfile) + "\\" + Assembly.GetEntryAssembly().GetName().Name + "\\Logs\\";
+
+                if (OperatingSystem.IsWindows())
+                {
+                    if (WindowsServiceHelpers.IsWindowsService())
+                    {
+                        this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.CommonApplicationData), Assembly.GetEntryAssembly().GetName().Name, "Logs");
+                        // Windows Service: C:\ProgramData\AppName\Logs
+                    }
+                    else
+                    {
+                        this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.LocalApplicationData), Assembly.GetEntryAssembly().GetName().Name, "Logs");
+                        // Standalone Console or Desktop app:   C:\Users\<user>\AppData\Local\AppName\Logs
+                    }
+                }
+                else if (OperatingSystem.IsAndroid())
+                {
+                   this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), "files" + "logs");
+                   //Android: /data/user/0/[your.package.name]/files/logs
+                }
+                else if(OperatingSystem.IsLinux())
+                {
+                    this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), Assembly.GetEntryAssembly().GetName().Name, "Logs");
+                    //Linux: /home/<user>/AppName/Logs
+                }
+                else if(OperatingSystem.IsMacOS() || OperatingSystem.IsMacCatalyst())
+                {
+                    this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.LocalApplicationData), Assembly.GetEntryAssembly().GetName().Name, "Logs");
+                    ///Mac OSX: Users/username/Library/Application Support/AppName/Logs
+                }
+                else
+                {
+                    // Unknown OS, fallback.
+                    if(Environment.GetFolderPath(SpecialFolder.UserProfile) != "")
+                    {
+                        this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), Assembly.GetEntryAssembly().GetName().Name, "Logs");
+                    }
+                    else 
+                    {
+                        throw new NotImplementedException($"Logger Autoroute cannot determine best location for your log files.  Please submit an issue to the project GitHub with the information:  [OSVersion={Environment.OSVersion}] [CLR_Ver={Environment.Version.ToString()}] {Environment.NewLine}{Environment.NewLine}");
+                    }
+                }
+
             }
             else
             {
@@ -301,7 +343,7 @@ namespace Labworx
 
                     case LoggerRotationInterval.Monthly:
 
-                        if ((DateTime.Now - currentFileSet.Last().CreationTime).TotalDays > (360 / 12))
+                        if ((DateTime.Now - currentFileSet.Last().CreationTime).TotalDays > (365 / 12))
                             rotationRequired = true;
 
                         rotationReason = "Monthly Rotation";

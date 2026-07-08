@@ -213,6 +213,18 @@ or
 CustomPath = @"C:\Logs";
 ```
 
+## AutoRoute Paths
+
+| Operating System | Path |
+|---------|---------|
+| Windows (Standalone/Console) | `:\Users\<user>\AppData\Local\AppName\Logs` |
+| Windows (Service) | `:\ProgramData\AppName\Logs` |
+| Linux/nix | `/home/<user>/AppName/Logs` |
+| Mac OSX | `Users/username/Library/Application Support/AppName/Logs` |
+| Android | `/data/user/0/[your.package.name]/files/logs` |
+| Fallback | `?UserProfile?/AppName/Logs` |
+| Unsupported | If Fallback fails to yield a value, an exception is thrown |
+
 ---
 
 # Example Configuration
