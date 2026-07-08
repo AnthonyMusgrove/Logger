@@ -22,6 +22,10 @@
     <PackageRequireLicenseAcceptance>True</PackageRequireLicenseAcceptance>
   </PropertyGroup>
 
+	<PropertyGroup>
+		<VersionPrefix>1.1.0</VersionPrefix>
+	</PropertyGroup>
+
   <ItemGroup>
     <None Include="..\LICENSE">
       <Pack>True</Pack>
