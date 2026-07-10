@@ -5,8 +5,9 @@ using System.Text.RegularExpressions;
 
 namespace Labworx.Extensions
 {
-    public static class LongExtensions
+    public static class StringExtensions
     {
+
         /// <summary>
         /// Converts a human-readable descriptive filesize string to its equivalent in bytes. 
         /// </summary>
@@ -18,10 +19,8 @@ namespace Labworx.Extensions
         /// <exception cref="System.ArgumentException">Thrown when <paramref name="FileSize"/> is null or empty.</exception>
         /// <exception cref="System.FormatException">Thrown when <paramref name="FileSize"/> doesn't specify a valid string-representation of a filesize</exception>
         /// <exception cref="System.FormatException">Thrown when <paramref name="FileSize"/> doesn't specify a valid unit of measurement (B, KB, MB, GB, TB, PB) </exception>
-        public static long FromDescriptiveFileSize(this long number, string FileSize)
+        public static long toLongFileSize(this string FileSize)
         {
-            number = 0;
-
             if (string.IsNullOrWhiteSpace(FileSize))
                 throw new ArgumentException("File size string cannot be null or empty.");
 
@@ -45,6 +44,7 @@ namespace Labworx.Extensions
                 _ => throw new FormatException($"Unsupported size unit: '{unit}'")
             };
         }
+
 
     }
 }

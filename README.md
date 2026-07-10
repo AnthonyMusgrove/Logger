@@ -106,6 +106,72 @@ var logger = new Logger(logName, options);
 | `TotalFilesToRetain` | Maximum number of log files to retain. `0` = Unlimited. |
 | `TimeStampFormat` | Select one of the built-in timestamp formats. |
 | `CustomTimestampFormat` | Custom .NET DateTime format string when using `Custom`. |
+| `encoding` | Log File Encoding, Default = `UTF-8`. (all .NET encoding types supported: `utf-8`, `utf-16`, `utf-16be`, `utf-32`, `utf-32be`, `us-ascii`, `iso-8859-1`)|
+| `EncryptionKey` | 32-byte AES Encryption Key for Encrypted Log Files |
+| `EncryptionIV` | 16-byte AES Encryption IV for Encrypted Log Files |
+
+---
+
+# Async Support
+
+Logger supports async operations.
+
+await logger.WriteAsync("Writing asynchronously.");
+
+or
+
+await logger.WriteLineAsync("Writing a line asynchronously.");
+
+---
+
+# Encryption
+
+Logger now supports AES Encryption (encrypted log files)
+
+Encryption Quick Start:
+
+```csharp
+var options = new LoggerOptions
+{
+    autoRoute = true,
+    RotationInterval = LoggerRotationInterval.Daily,
+    RotateOnFileSizeLimit = "3MB",
+    TotalFilesToRetain = 10,
+    TimeStampFormat = LoggerTimestampFormat.DateTime24HrFormatSQL,
+    EncryptionKey = "4i02yjt0weitjywm6uvwtewqartq9grj",
+    EncryptionIV = "lfkdurnb85jdk58g"
+};
+
+var logger = new Logger(logName, options);
+
+// synchronously:
+logger.WriteEncryptedLine("Data to be encrypted in log file here");
+
+// asynchronously:
+logger.WriteEncryptedLineAsync("Data to be encrypted in log file here");
+
+```
+
+Decryption Quick Start:
+
+```csharp
+
+var options = new LoggerOptions
+{
+    EncryptionKey = "4i02yjt0weitjywm6uvwtewqartq9grj",
+    EncryptionIV = "lfkdurnb85jdk58g"
+};
+
+var logger = new Logger("", options);
+
+// decrypt asynchonously and return as string:
+string decrypted_log_contents = await logger.DecryptLogFileAsyncAsString("decrypted text");
+
+// decrypt asynchronously and save as a new unencrypted logfile:
+await logger.DecryptLogFileAsync(encryptedFilePath, destinationPlainFilePath);
+```
+
+The logger demo project has examples.
 
 ---
 
@@ -238,14 +304,8 @@ var options = new LoggerOptions(
     TimeStampFormat: LoggerTimestampFormat.ISO8601TZOffset
 );
 
-var logger = new Logger(options);
+var logger = new Logger("logName", options);
 ```
-
----
-
-# Planned Features
-
-- Async logging
 
 ---
 

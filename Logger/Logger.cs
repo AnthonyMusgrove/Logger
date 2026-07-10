@@ -1,94 +1,91 @@
 ﻿using Labworx.Extensions;
 using Labworx.Util;
 using Microsoft.Extensions.Hosting.WindowsServices;
+using Microsoft.Extensions.Options;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using static System.Environment;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace Labworx
 {
-    public class Logger
+    public class Logger : IDisposable
     {
+        private readonly object _lockObject = new object();
+        private readonly CancellationTokenSource _cts = new CancellationTokenSource();
+
         public event EventHandler<LoggerEventArgs>? onInitialize;
         public event EventHandler<LoggerErrorEventArgs>? onError;
         public event EventHandler<LoggerRolloverEventArgs>? onRollover;
         public event EventHandler<LoggerEventArgs>? onCreateNewLogfile;
 
-        public String LogName { get; set; } = "";
-        public String LogFilePath { get; set; } = "";
+        public string LogName { get; set; } = "";
+        public string LogFilePath { get; set; } = "";
 
-        private Boolean _IsInitialised = false;
-
+        private bool _IsInitialised = false;
         private LoggerOptions _options = new LoggerOptions();
-
         private string _currentWriteFile = "";
+        private bool disposedValue;
 
-        public Logger(String LogName)
+        // Both constructors now properly chain together to ensure the timer starts
+        public Logger(string logName) : this(logName, new LoggerOptions())
         {
-            this.LogName = LogName;
-            this._IsInitialised = this._Init();
         }
 
-        public Logger(String LogName, LoggerOptions Options)
+        public Logger(string logName, LoggerOptions options)
         {
-            this.LogName = LogName;
-            this._options = Options;
+            this.LogName = logName;
+            this._options = options;
             this._IsInitialised = this._Init();
-        }
 
-        private Boolean _Init()
-        {
             if (this._IsInitialised)
-                return (true);
+            {
+                _ = StartRolloverTimerAsync(_cts.Token);
+            }
+        }
 
-            // underscores are not allowed in log name, only dashes.  This is to do with log rolling.
+        private bool _Init()
+        {
+            if (this._IsInitialised) return true;
+
             if (this.LogName.Contains('_'))
                 this.LogName = this.LogName.Replace("_", "-");
 
-            if (this._options.autoRoute)
+            if (this._options.AutoRoute)
             {
+                string appName = Assembly.GetEntryAssembly()?.GetName().Name ?? "LabworxLogger";
 
                 if (OperatingSystem.IsWindows())
                 {
-                    if (WindowsServiceHelpers.IsWindowsService())
-                    {
-                        this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.CommonApplicationData), Assembly.GetEntryAssembly().GetName().Name, "Logs");
-                        // Windows Service: C:\ProgramData\AppName\Logs
-                    }
-                    else
-                    {
-                        this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.LocalApplicationData), Assembly.GetEntryAssembly().GetName().Name, "Logs");
-                        // Standalone Console or Desktop app:   C:\Users\<user>\AppData\Local\AppName\Logs
-                    }
+                    this.LogFilePath = WindowsServiceHelpers.IsWindowsService()
+                        ? Path.Combine(Environment.GetFolderPath(SpecialFolder.CommonApplicationData), appName, "Logs")
+                        : Path.Combine(Environment.GetFolderPath(SpecialFolder.LocalApplicationData), appName, "Logs");
                 }
                 else if (OperatingSystem.IsAndroid())
                 {
-                   this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), "files" + "logs");
-                   //Android: /data/user/0/[your.package.name]/files/logs
+                    this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), "files", "logs");
                 }
-                else if(OperatingSystem.IsLinux())
+                else if (OperatingSystem.IsLinux())
                 {
-                    this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), Assembly.GetEntryAssembly().GetName().Name, "Logs");
-                    //Linux: /home/<user>/AppName/Logs
+                    this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), appName, "Logs");
                 }
-                else if(OperatingSystem.IsMacOS() || OperatingSystem.IsMacCatalyst())
+                else if (OperatingSystem.IsMacOS() || OperatingSystem.IsMacCatalyst())
                 {
-                    this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.LocalApplicationData), Assembly.GetEntryAssembly().GetName().Name, "Logs");
-                    ///Mac OSX: Users/username/Library/Application Support/AppName/Logs
+                    this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.LocalApplicationData), appName, "Logs");
                 }
                 else
                 {
-                    // Unknown OS, fallback.
-                    if(Environment.GetFolderPath(SpecialFolder.UserProfile) != "")
+                    string userProfile = Environment.GetFolderPath(SpecialFolder.UserProfile);
+                    if (!string.IsNullOrEmpty(userProfile))
                     {
-                        this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), Assembly.GetEntryAssembly().GetName().Name, "Logs");
+                        this.LogFilePath = Path.Combine(userProfile, appName, "Logs");
                     }
-                    else 
+                    else
                     {
-                        throw new NotImplementedException($"Logger Autoroute cannot determine best location for your log files.  Please submit an issue to the project GitHub with the information:  [OSVersion={Environment.OSVersion}] [CLR_Ver={Environment.Version.ToString()}] {Environment.NewLine}{Environment.NewLine}");
+                        throw new NotImplementedException($"Logger Autoroute cannot determine best location for your log files. [OSVersion={Environment.OSVersion}] [CLR_Ver={Environment.Version}]");
                     }
                 }
-
             }
             else
             {
@@ -99,294 +96,389 @@ namespace Labworx
             {
                 Directory.CreateDirectory(LogFilePath);
             }
-            catch (IOException io_ex)
-            {
-                if (this.onError != null)
-                    this.onError(this, new LoggerErrorEventArgs(this._currentWriteFile, io_ex));
-
-                return (false);
-            }
             catch (Exception ex)
             {
-                if (this.onError != null)
-                    this.onError(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-
-                return (false);
+                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+                return false;
             }
 
-            this.ProcessRollover();
+            lock (_lockObject)
+            {
+                this.ProcessRollover();
+            }
 
-            if(this.onInitialize != null)
-                this.onInitialize(this, new LoggerEventArgs(this._currentWriteFile));
-
+            this.onInitialize?.Invoke(this, new LoggerEventArgs(this._currentWriteFile));
             this._IsInitialised = true;
 
-            return (true);
+            return true;
         }
 
-        private void touchNew(String newFileReason = "")
+        private async Task StartRolloverTimerAsync(CancellationToken cancellationToken)
         {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
             try
             {
-                FileStream _cf = File.Create(this._currentWriteFile);
-                _cf.Close();
-
-                File.SetCreationTime(this._currentWriteFile, DateTime.Now);
-
-                this.WriteLine("Created new log file. [" + newFileReason + "]");
-
-                if (this.onCreateNewLogfile != null)
-                    this.onCreateNewLogfile(this, new LoggerEventArgs(this._currentWriteFile));
+                while (await timer.WaitForNextTickAsync(cancellationToken))
+                {
+                    lock (_lockObject)
+                    {
+                        this.ProcessRollover();
+                    }
+                }
             }
-            catch (Exception ex)
-            {
-                if (this.onError != null)
-                    this.onError(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-            }
+            catch (OperationCanceledException) { }
         }
 
-        private void touchNew(ref List<FileInfo> currentFileSet, String newFileReason = "")
+        private bool ProcessRollover()
         {
-            try
+            var opt = this._options;
+            if (opt.RotationInterval == LoggerRotationInterval.Disabled &&
+                opt.TotalFilesToRetain == 0 &&
+                string.IsNullOrEmpty(opt.RotateOnFileSizeLimit))
             {
-                FileStream _cf = File.Create(this._currentWriteFile);
-                _cf.Close();
-
-                File.SetCreationTime(this._currentWriteFile, DateTime.Now);
-                currentFileSet.Insert(0, new FileInfo(this._currentWriteFile));
-
-                this.WriteLine("Created new log file. [" + newFileReason + "]");
-
-                if (this.onCreateNewLogfile != null)
-                    this.onCreateNewLogfile(this, new LoggerEventArgs(this._currentWriteFile));
-            }
-            catch (Exception ex)
-            {
-                if (this.onError != null)
-                    this.onError(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+                return true;
             }
 
-        }
-
-        public void Write(String Data)
-        {
-            try
-            {
-                ProcessRollover();
-                LoggerTimestampFormat tf = this._options.TimeStampFormat;
-                File.AppendAllText(this._currentWriteFile, DateTime.Now.ToString(tf.LoggerMeta().Format) + ": " + Data, Encoding.UTF8);
-            }
-            catch (Exception ex)
-            {
-                if (this.onError != null)
-                    this.onError(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-            }
-        }
-
-        public void WriteLine(String Data)
-        {
-            this.Write(Data + Environment.NewLine);
-        }
-
-        private List<FileInfo> getCurrentFileSet()
-        {
-            List<FileInfo> currentFileSet = new List<FileInfo>();
-
-            try
-            {
-                currentFileSet = new DirectoryInfo(this.LogFilePath)
-                .GetFiles(this.LogName + "_*", SearchOption.TopDirectoryOnly)
-                .OrderByDescending(f => f.CreationTime)
-                .ToList();
-            }
-            catch (Exception ex)
-            {
-                if (this.onError != null)
-                    this.onError(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-            }
-
-            return (currentFileSet);
-        }
-
-        private Boolean ProcessRollover()
-        {
-
-            if (this._options.RotationInterval == LoggerRotationInterval.Disabled && this._options.TotalFilesToRetain == 0 && (this._options.RotateOnFileSizeLimit == "" || this._options.RotateOnFileSizeLimit == null))
-                return (true);
-
-            List<FileInfo> currentFileSet = this.getCurrentFileSet();
-
-            String logfileExtension = "log";
-
-            if (this._options.CustomExtension != null && this._options.CustomExtension != "")
-                logfileExtension = this._options.CustomExtension;
-
-            this._currentWriteFile = this.LogFilePath + this.LogName + "." + logfileExtension;
+            string extension = string.IsNullOrEmpty(opt.CustomExtension) ? "log" : opt.CustomExtension;
+            this._currentWriteFile = Path.Combine(this.LogFilePath, $"{this.LogName}.{extension}");
 
             if (!File.Exists(this._currentWriteFile))
+            {
                 this.touchNew("Initial logfile in set");
+            }
 
-            currentFileSet.Insert(0, new FileInfo(this._currentWriteFile));
+            FileInfo newestLogFile = new FileInfo(this._currentWriteFile);
+            List<FileInfo> currentFileSet = this.getCurrentFileSet();
+            currentFileSet.Insert(0, newestLogFile);
 
-            FileInfo newest_log_file = currentFileSet.First();
+            string timestamp = DateTime.Now.ToString("yyyy_MM_dd_HHmmss");
+            string archiveFilename = Path.Combine(this.LogFilePath, $"{this.LogName}_{timestamp}.{extension}");
 
-            if (this._options.RotateOnFileSizeLimit != "" && this._options.RotateOnFileSizeLimit != null)
+            try
             {
-                long bytes_max_size = new long().FromDescriptiveFileSize(this._options.RotateOnFileSizeLimit);
-
-                if (newest_log_file.Length >= bytes_max_size)
+                // 1. File Size Verification
+                if (!string.IsNullOrEmpty(opt.RotateOnFileSizeLimit))
                 {
-                    //need to roll over! Delete last file, create new one, and rename old current to the date time format.
-                    try
+                    long maxBytes = opt.RotateOnFileSizeLimit.toLongFileSize();
+                    if (newestLogFile.Length >= maxBytes)
                     {
-                        String precededFilename = this.LogFilePath + @"\" + this.LogName + "_" + DateTime.Now.ToString("yyyy_MM_dd_HHmmss") + "." + logfileExtension;
-                        File.Move(this._currentWriteFile, precededFilename);
-                        this.touchNew(ref currentFileSet, "Filesize Rotation Size> " + this._options.RotateOnFileSizeLimit);
-
-                        if (this.onRollover != null)
-                            this.onRollover(this, new LoggerRolloverEventArgs(this._currentWriteFile, LoggerRolloverEventArgs.RolloverReason.FileSizeLimitHit, precededFilename));
-
+                        File.Move(this._currentWriteFile, archiveFilename);
+                        this.touchNew(ref currentFileSet, $"Filesize Rotation Size> {opt.RotateOnFileSizeLimit}");
+                        this.onRollover?.Invoke(this, new LoggerRolloverEventArgs(this._currentWriteFile, LoggerRolloverEventArgs.RolloverReason.FileSizeLimitHit, archiveFilename));
+                        return true;
                     }
-                    catch (Exception ex)
-                    {
-                        if (this.onError != null)
-                            this.onError(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+                }
 
-                        return (false);
+                // 2. Interval Verification
+                if (opt.RotationInterval != LoggerRotationInterval.Disabled)
+                {
+                    TimeSpan age = DateTime.Now - newestLogFile.CreationTime;
+                    bool rotationRequired = opt.RotationInterval switch
+                    {
+                        LoggerRotationInterval.Minutely => age.TotalMinutes > 1,
+                        LoggerRotationInterval.Hourly => age.TotalHours > 1,
+                        LoggerRotationInterval.Daily => age.TotalDays > 1,
+                        LoggerRotationInterval.Weekly => age.TotalDays > 7,
+                        LoggerRotationInterval.Fortnightly => age.TotalDays > 14,
+                        LoggerRotationInterval.Monthly => age.TotalDays > 30.41,
+                        LoggerRotationInterval.Yearly => age.TotalDays > 365,
+                        _ => false
+                    };
+
+                    if (rotationRequired)
+                    {
+                        File.Move(this._currentWriteFile, archiveFilename);
+                        this.touchNew(ref currentFileSet, $"{opt.RotationInterval} Rotation");
+                        this.onRollover?.Invoke(this, new LoggerRolloverEventArgs(this._currentWriteFile, LoggerRolloverEventArgs.RolloverReason.RolloverIntervalHit, archiveFilename));
+                        return true;
+                    }
+                }
+
+                // 3. File Set Pruning
+                if (opt.TotalFilesToRetain > 0 && currentFileSet.Count > opt.TotalFilesToRetain)
+                {
+                    while (currentFileSet.Count > opt.TotalFilesToRetain)
+                    {
+                        FileInfo oldestFile = currentFileSet.Last();
+                        if (File.Exists(oldestFile.FullName))
+                        {
+                            File.Delete(oldestFile.FullName);
+                        }
+                        currentFileSet.RemoveAt(currentFileSet.Count - 1);
                     }
                 }
             }
-
-            // End check for File Size > Configured Rotate Size
-            // Check for total files to retain ..
-
-            if ((currentFileSet.Count - 1) >= this._options.TotalFilesToRetain)
+            catch (Exception ex)
             {
-                try
-                {
-                    String fileToDelete = currentFileSet.Last().FullName;
-
-                    File.Delete(currentFileSet.Last().FullName);
-                    currentFileSet.RemoveAt(currentFileSet.Count - 1);
-
-                    String precededFilename = this.LogFilePath + @"\" + this.LogName + "_" + DateTime.Now.ToString("yyyy_MM_dd_HHmmss") + "." + logfileExtension;
-
-                    File.Move(this._currentWriteFile, precededFilename);
-                    this.touchNew(ref currentFileSet, "Total Files Retained >= " + this._options.TotalFilesToRetain);
-
-                    if (this.onRollover != null)
-                        this.onRollover(this, new LoggerRolloverEventArgs(this._currentWriteFile, LoggerRolloverEventArgs.RolloverReason.FileCountRetainLimitHit, precededFilename));
-
-                }
-                catch (Exception ex)
-                {
-                    if (this.onError != null)
-                        this.onError(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-
-                    return (false);
-                }
+                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+                return false;
             }
-            /* end check total files retain */
 
-            // now check Rotation Intervals 
-            if (this._options.RotationInterval != LoggerRotationInterval.Disabled)
-            {
-                Boolean rotationRequired = false;
-                String rotationReason = "";
-
-                switch (this._options.RotationInterval)
-                {
-                    case LoggerRotationInterval.Minutely:
-
-                        if ((DateTime.Now - currentFileSet.Last().CreationTime).TotalMinutes > 1)
-                            rotationRequired = true;
-
-                        rotationReason = "Minutely Rotation";
-
-                        break;
-
-                    case LoggerRotationInterval.Hourly:
-
-                        if ((DateTime.Now - currentFileSet.Last().CreationTime).TotalHours > 1)
-                            rotationRequired = true;
-
-                        rotationReason = "Hourly Rotation";
-
-                        break;
-
-                    case LoggerRotationInterval.Daily:
-
-                        if ((DateTime.Now - currentFileSet.Last().CreationTime).TotalDays > 1)
-                            rotationRequired = true;
-
-                        rotationReason = "Daily Rotation";
-
-                        break;
-
-                    case LoggerRotationInterval.Weekly:
-
-                        if ((DateTime.Now - currentFileSet.Last().CreationTime).TotalDays > 7)
-                            rotationRequired = true;
-
-                        rotationReason = "Weekly Rotation";
-
-                        break;
-
-                    case LoggerRotationInterval.Fortnightly:
-
-                        if ((DateTime.Now - currentFileSet.Last().CreationTime).TotalDays > 14)
-                            rotationRequired = true;
-
-                        rotationReason = "Fortnightly Rotation";
-
-                        break;
-
-                    case LoggerRotationInterval.Monthly:
-
-                        if ((DateTime.Now - currentFileSet.Last().CreationTime).TotalDays > (365 / 12))
-                            rotationRequired = true;
-
-                        rotationReason = "Monthly Rotation";
-
-                        break;
-
-                    case LoggerRotationInterval.Yearly:
-
-                        if ((DateTime.Now - currentFileSet.Last().CreationTime).TotalDays > 365)
-                            rotationRequired = true;
-
-                        rotationReason = "Yearly Rotation";
-
-                        break;
-                }
-
-                if (rotationRequired)
-                {
-                    // do rotation!
-                    try
-                    {
-                        String precededFilename = this.LogFilePath + @"\" + this.LogName + "_" + DateTime.Now.ToString("yyyy_MM_dd_HHmmss") + "." + logfileExtension;
-
-                        File.Move(this._currentWriteFile, precededFilename);
-                        this.touchNew(ref currentFileSet, rotationReason);
-
-                        if (this.onRollover != null)
-                            this.onRollover(this, new LoggerRolloverEventArgs(this._currentWriteFile, LoggerRolloverEventArgs.RolloverReason.RolloverIntervalHit, precededFilename));
-
-                    }
-                    catch (Exception ex)
-                    {
-                        if (this.onError != null)
-                            this.onError(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-
-                        return (false);
-                    }
-                }
-            }
-            /* end check Rotation Intervals */
-
-            return (true);
-
+            return true;
         }
+
+        private void touchNew(string newFileReason = "")
+        {
+            try
+            {
+                using (File.Create(this._currentWriteFile)) { }
+                File.SetCreationTime(this._currentWriteFile, DateTime.Now);
+
+//                File.AppendAllText(this._currentWriteFile, $"{DateTime.Now}: Created new log file. [{newFileReason}]{Environment.NewLine}");
+                this.onCreateNewLogfile?.Invoke(this, new LoggerEventArgs(this._currentWriteFile));
+            }
+            catch (Exception ex)
+            {
+                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+            }
+        }
+
+
+        private void touchNew(ref List<FileInfo> currentFileSet, string newFileReason = "")
+        {
+            try
+            {
+                using (File.Create(this._currentWriteFile)) { }
+                File.SetCreationTime(this._currentWriteFile, DateTime.Now);
+                currentFileSet.Insert(0, new FileInfo(this._currentWriteFile));
+//                File.AppendAllText(this._currentWriteFile, $"{DateTime.Now}: Created new log file. [{newFileReason}]{Environment.NewLine}");
+                this.onCreateNewLogfile?.Invoke(this, new LoggerEventArgs(this._currentWriteFile));
+            }
+            catch (Exception ex)
+            {
+                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+            }
+        }
+        public async Task WriteAsync(string Data)
+        {
+            try
+            {
+                LoggerTimestampFormat tf = this._options.TimeStampFormat;
+                string formattedLog = $"{DateTime.Now.ToString(tf.LoggerMeta().Format)}: {Data}";
+                string targetFile;
+                lock (_lockObject)
+                {
+                    targetFile = this._currentWriteFile;
+                }
+                await File.AppendAllTextAsync(targetFile, formattedLog, this._options.encoding);
+            }
+            catch (Exception ex)
+            {
+                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+            }
+        }
+        public async Task WriteLineAsync(string Data)
+        {
+            await this.WriteAsync($"{Data}{Environment.NewLine}");
+        }
+
+        public void Write(string Data)
+        {
+            try
+            {
+                LoggerTimestampFormat tf = this._options.TimeStampFormat;
+                string formattedLog = $"{DateTime.Now.ToString(tf.LoggerMeta().Format)}: {Data}";
+                string targetFile;
+                lock (_lockObject)
+                {
+                    targetFile = this._currentWriteFile;
+                }
+                File.AppendAllText(targetFile, formattedLog, this._options.encoding);
+            }
+            catch (Exception ex)
+            {
+                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+            }
+        }
+        public void WriteLine(string Data)
+        {
+            this.Write($"{Data}{Environment.NewLine}");
+        }
+        private List<FileInfo> getCurrentFileSet()
+        {
+            string extension = string.IsNullOrEmpty(_options.CustomExtension) ? "log" : _options.CustomExtension;
+            var di = new DirectoryInfo(this.LogFilePath);
+            if (!di.Exists) return new List<FileInfo>();
+            return di.GetFiles($"{this.LogName}_*.{extension}")
+            .OrderByDescending(f => f.CreationTime)
+            .ToList();
+        }
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!disposedValue)
+            {
+                if (disposing)
+                {
+                    _cts.Cancel();
+                    _cts.Dispose();
+                }
+                disposedValue = true;
+            }
+        }
+        public void Dispose()
+        {
+            Dispose(disposing: true);
+            GC.SuppressFinalize(this);
+        }
+
+
+        private string EncryptLine(string plainText)
+        {
+            if (string.IsNullOrEmpty(this._options.EncryptionKey) || this._options.EncryptionKey.Length < 32 ||
+                string.IsNullOrEmpty(this._options.EncryptionIV) || this._options.EncryptionIV.Length < 16)
+            {
+                return plainText;
+            }
+
+            string safeKeyStr = this._options.EncryptionKey.Substring(0, 32);
+            string safeIvStr = this._options.EncryptionIV.Substring(0, 16);
+
+            using (Aes aes = Aes.Create())
+            {
+                aes.Key = Encoding.UTF8.GetBytes(safeKeyStr);
+                aes.IV = Encoding.UTF8.GetBytes(safeIvStr);
+
+                using (MemoryStream ms = new MemoryStream())
+                {
+                    using (CryptoStream cs = new CryptoStream(ms, aes.CreateEncryptor(), CryptoStreamMode.Write))
+                    {
+                        byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
+                        cs.Write(plainBytes, 0, plainBytes.Length);
+                        cs.FlushFinalBlock();
+                    }
+
+                    return Convert.ToBase64String(ms.ToArray());
+                }
+            }
+        }
+
+        public async Task DecryptLogFileAsync(string encryptedFilePath, string destinationPlainFilePath)
+        {
+            if (!File.Exists(encryptedFilePath))
+                throw new FileNotFoundException("Target encrypted log file not found.", encryptedFilePath);
+
+            using (StreamReader reader = new StreamReader(encryptedFilePath, Encoding.UTF8))
+            using (StreamWriter writer = new StreamWriter(destinationPlainFilePath, false, Encoding.UTF8))
+            {
+                string? encryptedLine;
+                while ((encryptedLine = await reader.ReadLineAsync()) != null)
+                {
+                    if (string.IsNullOrWhiteSpace(encryptedLine)) continue;
+
+                    string decryptedLine = this.DecryptLine(encryptedLine, this._options.EncryptionKey, this._options.EncryptionIV);
+
+                    await writer.WriteAsync(decryptedLine);
+                }
+            }
+        }
+
+        public async Task<string> DecryptLogFileAsyncAsString(string encryptedFilePath)
+        {
+            if (!File.Exists(encryptedFilePath))
+                throw new FileNotFoundException("Target encrypted log file not found.", encryptedFilePath);
+
+            string decrypted_logfile = string.Empty;
+
+            using (StreamReader reader = new StreamReader(encryptedFilePath, Encoding.UTF8))
+            {
+                string? encryptedLine;
+                while ((encryptedLine = await reader.ReadLineAsync()) != null)
+                {
+                    if (string.IsNullOrWhiteSpace(encryptedLine)) continue;
+
+                    decrypted_logfile += DecryptLine(encryptedLine, this._options.EncryptionKey, this._options.EncryptionIV);
+                }
+            }
+
+            return (decrypted_logfile);
+        }
+
+        public string DecryptLine(string cipherText, string encryptionKey, string encryptionIV)
+        {
+            if (string.IsNullOrWhiteSpace(cipherText)) {
+                return string.Empty; 
+            }
+
+            if (string.IsNullOrEmpty(this._options.EncryptionKey) || this._options.EncryptionKey.Length < 32 ||
+            string.IsNullOrEmpty(this._options.EncryptionIV) || this._options.EncryptionIV.Length < 16)
+            {
+            }
+
+            string safeKeyStr = this._options.EncryptionKey.Substring(0, 32);
+            string safeIvStr = this._options.EncryptionIV.Substring(0, 16);
+
+            try
+            {
+                using (Aes aes = Aes.Create())
+                {
+                    aes.Key = Encoding.UTF8.GetBytes(safeKeyStr);
+                    aes.IV = Encoding.UTF8.GetBytes(safeIvStr);
+
+                    using (MemoryStream ms = new MemoryStream(Convert.FromBase64String(cipherText.Trim())))
+                    {
+                        using (CryptoStream cs = new CryptoStream(ms, aes.CreateDecryptor(), CryptoStreamMode.Read))
+                        {
+                            using (StreamReader sr = new StreamReader(cs, Encoding.UTF8))
+                            {
+                                return sr.ReadToEnd();
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                // Returns an indicator or throws if the line is corrupted or tampered with
+                return "[CORRUPTED OR INVALID LOG LINE]";
+            }
+        }
+
+        public async Task WriteEncryptedLineAsync(string Data)
+        {
+            try
+            {
+                LoggerTimestampFormat tf = this._options.TimeStampFormat;
+
+                string formattedLog = $"{DateTime.Now.ToString(tf.LoggerMeta().Format)}: {Data}{Environment.NewLine}";
+
+                string encryptedLine = EncryptLine(formattedLog) + Environment.NewLine;
+                string targetFile;
+
+                lock (_lockObject)
+                {
+                    targetFile = this._currentWriteFile;
+                }
+
+                await File.AppendAllTextAsync(targetFile, encryptedLine, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+            }
+        }
+
+        public void WriteEncryptedLine(string Data)
+        {
+            try
+            {
+                LoggerTimestampFormat tf = this._options.TimeStampFormat;
+                string formattedLog = $"{DateTime.Now.ToString(tf.LoggerMeta().Format)}: {Data}{Environment.NewLine}";
+
+                string encryptedLine = EncryptLine(formattedLog) + Environment.NewLine;
+                string targetFile;
+
+                lock (_lockObject)
+                {
+                    targetFile = this._currentWriteFile;
+                }
+
+                File.AppendAllText(targetFile, encryptedLine, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+            }
+        }
+
     }
 }

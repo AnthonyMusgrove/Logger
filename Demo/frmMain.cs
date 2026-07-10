@@ -1,22 +1,48 @@
-using System.Drawing.Imaging;
 using Labworx;
 using Labworx.Extensions;
 using Labworx.Util;
+using System.Drawing.Imaging;
+using System.Text;
 
 namespace LoggerDemo
 {
     public partial class frmMain : Form
     {
+
+        private DemoPreferences _demoPreferences;
+
         public frmMain()
         {
             InitializeComponent();
+            this.FormClosing += FrmMain_FormClosing;
         }
 
+        private void FrmMain_FormClosing(object? sender, FormClosingEventArgs e)
+        {
+            _demoPreferences.LogName = this.txtLogName.Text;
+            _demoPreferences.CustomLogDir = this.txtFilePath.Text;
+            _demoPreferences.AutoRoute = this.chkAutoRoute.Checked;
+            _demoPreferences.CustomFileExtension = this.txtCustomExtension.Text;
+            _demoPreferences.DefaultFileExtension = this.chkDefaultExtension.Checked;
+            _demoPreferences.LogFilesToRetain = (int)this.txtTotalLogfilesToRetain.Value;
+            _demoPreferences.UnlimitedLogFiles = this.chkUnlimitedFilesToRetain.Checked;
+            _demoPreferences.RotationInterval = (LoggerRotationInterval?)this.cboLoggerRotationInterval.SelectedItem ?? LoggerRotationInterval.Disabled;
+            _demoPreferences.TimeStampFormat = (LoggerTimestampFormat?)this.cboTimestampFormat.SelectedItem ?? LoggerTimestampFormat.DateTime24HrFormatSQL;
+            _demoPreferences.CustomTimestampFormat = this.txtCustomTimestampFormat.Text;
+            _demoPreferences.UnlimitedLogFileSize = this.chkUnlimitedFileSize.Checked;
+            _demoPreferences.RotateOnFileSize = this.txtLogFilesizeLimit.Text;
+            _demoPreferences.encoding = cboLogTextEncoding.SelectedValue?.ToString() ?? "utf-8";
+            _demoPreferences.enableEncryption = chkEncrypt.Checked;
+            _demoPreferences.encryptionKey = this.txtEncryptionKey.Text;
+            _demoPreferences.encryptionIv = this.txtEncryptionIV.Text;
+            _demoPreferences.Save();
+        }
+
+
         private Logger? _logger { get; set; } = null;
-
         private frmTestStatus? _frmTestStatus { get; set; } = null;
-
         private Boolean _isTestRunning { get; set; } = false;
+        private Boolean _isEncryptionEnabled { get; set; } = false;
 
         private string custom_path_pre_autoroute = "";
         private string custom_logfile_extension_pre_default = "";
@@ -54,6 +80,8 @@ namespace LoggerDemo
 
         private void frmMain_Load(object sender, EventArgs e)
         {
+            _demoPreferences = DemoPreferences.Load();
+
             this.pctLogo.BackColor = Color.Transparent;
             this.pctLogo.Image = this.SetImageOpacity(this.pctLogo.Image, 0.75f);
 
@@ -67,11 +95,32 @@ namespace LoggerDemo
                      .Select(f => f)
                      .ToList();
 
+            this.cboLogTextEncoding.DataSource = Encoding.GetEncodings()
+                     .Select(e => e.GetEncoding()) // Convert the info objects into actual Encoding instances
+                     .ToList();
 
-            this.chkAutoRoute.Checked = true;
-            this.chkDefaultExtension.Checked = true;
-            this.chkUnlimitedFilesToRetain.Checked = true;
-            this.chkUnlimitedFileSize.Checked = true;
+            this.cboLogTextEncoding.DisplayMember = "DisplayName";
+            this.cboLogTextEncoding.ValueMember = "WebName";
+
+            this.txtLogName.Text = _demoPreferences.LogName;
+            this.chkAutoRoute.Checked = _demoPreferences.AutoRoute;
+            this.txtFilePath.Text = _demoPreferences.CustomLogDir;
+            this.txtCustomExtension.Text = _demoPreferences.CustomFileExtension;
+            this.chkDefaultExtension.Checked = _demoPreferences.DefaultFileExtension;
+            this.txtTotalLogfilesToRetain.Value = (int)_demoPreferences.LogFilesToRetain;
+            this.chkUnlimitedFilesToRetain.Checked = _demoPreferences.UnlimitedLogFiles;
+            this.cboLoggerRotationInterval.SelectedItem = _demoPreferences.RotationInterval;
+            this.chkUnlimitedFileSize.Checked = _demoPreferences.UnlimitedLogFileSize;
+            this.txtLogFilesizeLimit.Text = _demoPreferences.RotateOnFileSize;
+
+            this.cboTimestampFormat.SelectedItem = _demoPreferences.TimeStampFormat;
+            this.txtCustomTimestampFormat.Text = _demoPreferences.CustomTimestampFormat;
+
+            cboLogTextEncoding.SelectedValue = _demoPreferences.encoding;
+
+            chkEncrypt.Checked = _demoPreferences.enableEncryption;
+            this.txtEncryptionKey.Text = _demoPreferences.encryptionKey;
+            this.txtEncryptionIV.Text = _demoPreferences.encryptionIv;
 
         }
 
@@ -181,6 +230,9 @@ namespace LoggerDemo
                 this.tmrLogTest.Stop();
                 this.tmrLogTest.Enabled = false;
 
+                this._isTestRunning = false;
+                this._isEncryptionEnabled = false;
+
                 if (this._frmTestStatus != null)
                     this._frmTestStatus.TestStopped();
 
@@ -197,15 +249,20 @@ namespace LoggerDemo
 
                     LoggerOptions _loggerOptions = new LoggerOptions()
                     {
-                        autoRoute = this.chkAutoRoute.Checked,
+                        AutoRoute = this.chkAutoRoute.Checked,
                         CustomPath = this.chkAutoRoute.Checked ? "" : this.txtFilePath.Text,
                         CustomExtension = this.chkDefaultExtension.Checked ? "" : this.txtCustomExtension.Text,
                         TotalFilesToRetain = this.chkUnlimitedFilesToRetain.Checked ? 0 : (int)this.txtTotalLogfilesToRetain.Value,
                         RotationInterval = (LoggerRotationInterval)this.cboLoggerRotationInterval.SelectedItem,
                         RotateOnFileSizeLimit = this.chkUnlimitedFileSize.Checked ? "" : this.txtLogFilesizeLimit.Text,
                         TimeStampFormat = (LoggerTimestampFormat)this.cboTimestampFormat.SelectedItem,
-                        CustomTimestampFormat = (this.cboTimestampFormat.Text.StartsWith("Use CustomFormat")) ? this.txtCustomTimestampFormat.Text : ""
+                        CustomTimestampFormat = (this.cboTimestampFormat.Text.StartsWith("Use CustomFormat")) ? this.txtCustomTimestampFormat.Text : "",
+                        encoding = (Encoding)this.cboLogTextEncoding.SelectedItem,
+                        EncryptionKey = this.txtEncryptionKey.Text,
+                        EncryptionIV = this.txtEncryptionIV.Text
                     };
+
+                    _isEncryptionEnabled = this.chkEncrypt.Checked;
 
                     this._logger = new Logger(this.txtLogName.Text, _loggerOptions);
 
@@ -288,6 +345,22 @@ namespace LoggerDemo
                 is_valid = false;
             }
 
+            if (this.chkEncrypt.Checked)
+            {
+                if (this.txtEncryptionKey.Text.Length < 1 || this.txtEncryptionKey.Text.Length > 32)
+                {
+                    validation_message += "** Encryption is enabled, but a 32-byte encryption key hasn't been specified" + Environment.NewLine + Environment.NewLine;
+                    is_valid = false;
+                }
+
+                if (this.txtEncryptionIV.Text.Length < 1 || this.txtEncryptionIV.Text.Length > 32)
+                {
+                    validation_message += "** Encryption is enabled, but a 16-byte encryption IV hasn't been specified" + Environment.NewLine + Environment.NewLine;
+                    is_valid = false;
+                }
+
+            }
+
             validation_message += Environment.NewLine;
 
             if (!is_valid)
@@ -300,13 +373,21 @@ namespace LoggerDemo
         {
             // just write random jibberish to the log file
 
-            if(this._logger != null && this._frmTestStatus != null)
+            if (this._logger != null && this._frmTestStatus != null)
             {
-                this._logger.WriteLine("Testing the logger system, writing out data every 5 seconds, parameters specified will handle how files are created and handled.");
+                if (this._isEncryptionEnabled)
+                {
+                    this._logger.WriteEncryptedLine("Testing the logger system, writing out data every 5 seconds, parameters specified will handle how files are created and handled.");
+                }
+                else
+                {
+                    this._logger.WriteLine("Testing the logger system, writing out data every 5 seconds, parameters specified will handle how files are created and handled.");
+                }
+
             }
             else
             {
-                if(this._frmTestStatus != null)
+                if (this._frmTestStatus != null)
                     this._frmTestStatus.addToTestOutput("Test stopped prematurely, isTestRunning or logger not initialised.");
 
                 this.btnRunTest.Text = "Run Test";
@@ -339,6 +420,12 @@ namespace LoggerDemo
 
             if (this._frmTestStatus != null)
                 this._frmTestStatus.TestStopped();
+        }
+
+        private void btnOpenEncryptedLogFileReader_Click(object sender, EventArgs e)
+        {
+            frmEncryptedLogReader _encrypedLogReaderForm = new frmEncryptedLogReader();
+            _encrypedLogReaderForm.ShowDialog(this);
         }
     }
 }
