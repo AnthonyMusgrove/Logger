@@ -2,7 +2,7 @@
 
 > A lightweight, high-performance C# file logging library with automatic log rotation, retention management, and flexible timestamp formatting.
 
-![Logger Screenshot](https://raw.githubusercontent.com/AnthonyMusgrove/Logger/refs/heads/main/Screenshot.png)
+![Logger Screenshot](https://raw.githubusercontent.com/AnthonyMusgrove/Logger/refs/heads/main/Screenshot.png??v=2)
 
 ---
 
