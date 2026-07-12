@@ -2,7 +2,7 @@
 
 > A lightweight, hyper-focused, zero-allocation cryptographic file logging library with automatic log rotation, retention management, and thread-safe streaming.
 
-![Logger Screenshot](https://raw.githubusercontent.com/AnthonyMusgrove/Logger/refs/heads/main/Screenshot.png?v=2.5.0)
+![Logger Screenshot](https://raw.githubusercontent.com/AnthonyMusgrove/Logger/refs/heads/main/Screenshot_v2.5.png)
 
 ---
 
