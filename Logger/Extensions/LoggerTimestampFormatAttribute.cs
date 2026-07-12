@@ -23,9 +23,9 @@ namespace Labworx.Extensions
 
     public static class EnumMetaExtensions
     {
-        public static LoggerTimestampFormatAttribute LoggerMeta(this Enum value)
+        public static LoggerTimestampFormatAttribute? LoggerMeta(this Enum value)
         {
-            FieldInfo field = value.GetType().GetField(value.ToString());
+            FieldInfo? field = value.GetType().GetField(value.ToString());
             return field?.GetCustomAttribute<LoggerTimestampFormatAttribute>();
         }
     }

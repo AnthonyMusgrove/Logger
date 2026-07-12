@@ -28,7 +28,7 @@ namespace LoggerDemo
 
         private void btnOpenLogDirectoryInExplorer_Click(object sender, EventArgs e)
         {
-            frmMain _frmMain = (frmMain)this.Owner;
+            frmMain? _frmMain = this.Owner as frmMain;
 
             if (_frmMain == null)
             {
@@ -36,14 +36,11 @@ namespace LoggerDemo
                 return;
             }
 
-            if (_frmMain.getLoggerInstance() == null)
-                return;
-
-            if (Directory.Exists(_frmMain.getLoggerInstance().LogFilePath))
+            if (_frmMain?.getLoggerInstance() is Labworx.Logger logger && Directory.Exists(logger.LogFilePath))
             {
                 Process.Start(new ProcessStartInfo
                 {
-                    FileName = _frmMain.getLoggerInstance().LogFilePath,
+                    FileName = logger.LogFilePath,
                     UseShellExecute = true
                 });
             }
@@ -51,7 +48,7 @@ namespace LoggerDemo
 
         private void btnStopTest_Click(object sender, EventArgs e)
         {
-            frmMain _frmMain = (frmMain)this.Owner;
+            frmMain? _frmMain = this.Owner as frmMain;
 
             if (_frmMain == null)
             {
@@ -76,7 +73,7 @@ namespace LoggerDemo
 
         private void frmTestStatus_FormClosing(object sender, FormClosingEventArgs e)
         {
-            frmMain _frmMain = (frmMain)this.Owner;
+            frmMain? _frmMain = this.Owner as frmMain;
 
             if (_frmMain == null)
             {

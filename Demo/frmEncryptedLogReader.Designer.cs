@@ -149,6 +149,7 @@
             btnClose.TabIndex = 49;
             btnClose.Text = "Close";
             btnClose.UseVisualStyleBackColor = true;
+            btnClose.Click += btnClose_Click;
             // 
             // dialogOpenLog
             // 
@@ -201,7 +202,6 @@
         private TextBox txtLogFile;
         private Button btnSelectLogFile;
         private TextBox txtLogFileContents;
-        private Button button1;
         private Button btnClose;
         private OpenFileDialog dialogOpenLog;
         private Button btnSaveUnencryptedCopy;

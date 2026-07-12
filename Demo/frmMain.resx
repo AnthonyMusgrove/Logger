@@ -120,6 +120,17 @@
   <metadata name="tmrLogTest.TrayLocation" type="System.Drawing.Point, System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a">
     <value>17, 17</value>
   </metadata>
+  <data name="label16.Text" xml:space="preserve">
+    <value>Logger is a simple yet powerful file logging library for .NET applications.
+
+It was designed to make writing log files effortless while providing the features needed for production environments, including automatic log rotation, file size limits, retention policies, and configurable timestamp formats.
+
+Whether you're building a console application, Windows Service, ASP.NET application, desktop software, or background worker, Logger provides an easy-to-use API without unnecessary complexity.
+</value>
+  </data>
+  <metadata name="$this.TrayHeight" type="System.Int32, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089">
+    <value>46</value>
+  </metadata>
   <assembly alias="System.Drawing" name="System.Drawing, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b03f5f7f11d50a3a" />
   <data name="$this.Icon" type="System.Drawing.Icon, System.Drawing" mimetype="application/x-microsoft.net.object.bytearray.base64">
     <value>

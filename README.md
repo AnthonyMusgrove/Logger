@@ -1,44 +1,31 @@
-# Logger
+# Logger v2.5
 
-> A lightweight, high-performance C# file logging library with automatic log rotation, retention management, and flexible timestamp formatting.
+> A lightweight, hyper-focused, zero-allocation cryptographic file logging library with automatic log rotation, retention management, and thread-safe streaming.
 
-![Logger Screenshot](https://raw.githubusercontent.com/AnthonyMusgrove/Logger/refs/heads/main/Screenshot.png?v=2.0.0)
+![Logger Screenshot](https://raw.githubusercontent.com/AnthonyMusgrove/Logger/refs/heads/main/Screenshot.png?v=2.5.0)
 
 ---
 
 ## Overview
 
-**Logger** is a simple yet powerful file logging library for .NET applications.
+**Logger** is a high-performance file logging engine for .NET applications. 
 
-It was designed to make writing log files effortless while providing the features needed for production environments, including automatic log rotation, file size limits, retention policies, and configurable timestamp formats.
+Version 2.5 introduces a complete architecture overhaul, exposing a modern `ILogger` interface backed by a **zero-allocation cryptographic engine**. Utilizing modern C# features like `Span<byte>` and `stackalloc`, every log line can be encrypted using AES-256 natively on the CPU stack before hitting disk—giving you ironclad file security with a completely flat memory graph.
 
-Whether you're building a console application, Windows Service, ASP.NET application, desktop software, or background worker, Logger provides an easy-to-use API without unnecessary complexity.
+Whether you are building low-latency background workers, high-volume APIs, desktop applications, or robust cross-platform mobile apps, Logger provides asynchronous thread safety via optimized semaphores without garbage collection overhead.
 
 ---
 
 ## Features
 
-- ✅ Simple, clean API
-- ✅ Automatic log file creation
-- ✅ Automatic log directory routing
-- ✅ Custom log directory support
-- ✅ Custom file extension support
-- ✅ Log rotation by:
-  - Minute
-  - Hour
-  - Day
-  - Week
-  - Fortnight
-  - Month
-  - Year
-- ✅ Log rotation by file size
-- ✅ Automatic cleanup of old log files
-- ✅ Configurable log retention limits
-- ✅ Multiple built-in timestamp formats
-- ✅ Custom timestamp formatting
-- ✅ Lightweight
-- ✅ No external dependencies
-- ✅ Suitable for desktop, server and embedded applications
+- ✅ **New `ILogger` Interface:** Standardized interface for clean dependency injection and testing.
+- ✅ **Zero-Allocation Logging Paths:** Utilizes `Span<byte>` and `stackalloc` to eliminate heap churning during active log writes.
+- ✅ **Fast Skip Logging:** Uses cached static tasks to instantly exit disabled log levels with 0 bytes allocated.
+- ✅ **Smart Cryptographic Auto-Detect:** Extension methods intelligently parse Hex, Base64, or Plain Text encryption keys natively.
+- ✅ **Thread-Safe Concurrency:** Coordinated via `SemaphoreSlim` to blend high-speed sync and async logs without thread locks.
+- ✅ **Automatic Lifecycle Management:** Log rotation by time intervals or precise file sizes (`5kb`, `50MB`, `2GB`).
+- ✅ **Smart Multi-OS Auto-Routing:** Intelligently maps local or common paths for Windows (User/Service), Linux, MacOS, and Android.
+- ✅ **No External Dependencies:** Written in pure, modern .NET C#.
 
 ---
 
@@ -46,9 +33,8 @@ Whether you're building a console application, Windows Service, ASP.NET applicat
 
 ## NuGet
 
-
 ```bash
-dotnet add package labworx.logger 
+dotnet add package labworx.logger
 ```
 
 or
@@ -61,266 +47,123 @@ Install-Package labworx.logger
 
 # Quick Start
 
+Instantiate using the brand new `ILogger` interface and choose between synchronous execution or the high-performance `Task`-based asynchronous calls.
+
 ```csharp
 using Labworx;
 
-var logger = new Logger(logName, LogOptions);
+// Seamlessly create through the standard interface
+ILogger logger = new Logger("AppCore", new LoggerOptions());
 
-logger.WriteLine("Application Started");
-logger.WriteLine("Loading configuration...");
-logger.WriteLine("Finished.");
+// High-speed Synchronous Logging
+logger.Info("Application initialized successfully.");
+logger.Warn("Database connections approaching pool limits.");
+
+// Allocation-Free Asynchronous Logging
+await logger.ErrorAsync("Failed to process transaction payload.");
 ```
 
 ---
 
 # Configuration
 
-Logger can be configured using the `LoggerOptions` class.
-
-```csharp
-String logName = "MyAppLogins";
-
-var options = new LoggerOptions
-{
-    autoRoute = true,
-    RotationInterval = LoggerRotationInterval.Daily,
-    RotateOnFileSizeLimit = "25MB",
-    TotalFilesToRetain = 30,
-    TimeStampFormat = LoggerTimestampFormat.DateTime24HrFormatSQL
-};
-
-var logger = new Logger(logName, options);
-```
-
----
-
-# LoggerOptions
-
-| Property | Description |
-|-----------|-------------|
-| `autoRoute` | Automatically selects the best log location on the system. |
-| `CustomPath` | Specify your own directory for log files. |
-| `CustomExtension` | Change the default `.log` extension. |
-| `RotateOnFileSizeLimit` | Rotate when a file reaches a specified size (e.g. `10MB`, `500KB`, `2GB`). |
-| `RotationInterval` | Time-based log rotation interval. |
-| `TotalFilesToRetain` | Maximum number of log files to retain. `0` = Unlimited. |
-| `TimeStampFormat` | Select one of the built-in timestamp formats. |
-| `CustomTimestampFormat` | Custom .NET DateTime format string when using `Custom`. |
-| `encoding` | Log File Encoding, Default = `UTF-8`. (all .NET encoding types supported: `utf-8`, `utf-16`, `utf-16be`, `utf-32`, `utf-32be`, `us-ascii`, `iso-8859-1`)|
-| `EncryptionKey` | 32-byte AES Encryption Key for Encrypted Log Files |
-| `EncryptionIV` | 16-byte AES Encryption IV for Encrypted Log Files |
-
----
-
-# Async Support
-
-Logger supports async operations.
-
-await logger.WriteAsync("Writing asynchronously.");
-
-or
-
-await logger.WriteLineAsync("Writing a line asynchronously.");
-
----
-
-# Encryption
-
-Logger now supports AES Encryption (encrypted log files)
-
-Encryption Quick Start:
+Logger is configured by passing a `LoggerOptions` instance into the initialization pipeline. 
 
 ```csharp
 var options = new LoggerOptions
 {
-    autoRoute = true,
+    AutoRoute = true,
+    LogLevel = LogLevel.Info, // Ignore Debug/Trace lines dynamically
     RotationInterval = LoggerRotationInterval.Daily,
-    RotateOnFileSizeLimit = "3MB",
+    RotateOnFileSizeLimit = "5kb",
     TotalFilesToRetain = 10,
-    TimeStampFormat = LoggerTimestampFormat.DateTime24HrFormatSQL,
-    EncryptionKey = "4i02yjt0weitjywm6uvwtewqartq9grj",
-    EncryptionIV = "lfkdurnb85jdk58g"
+    TimeStampFormat = LoggerTimestampFormat.DateTime24HrInternational
 };
 
-var logger = new Logger(logName, options);
-
-// synchronously:
-logger.WriteEncryptedLine("Data to be encrypted in log file here");
-
-// asynchronously:
-logger.WriteEncryptedLineAsync("Data to be encrypted in log file here");
-
+ILogger logger = new Logger("ABC", options);
 ```
 
-Decryption Quick Start:
+---
+
+# LoggerOptions Reference
+
+| Property | Type | Description |
+|-----------|------|-------------|
+| `AutoRoute` | `bool` | Automatically selects the optimal file path based on the host OS. |
+| `LogLevel` | `LogLevel` | Discards logs below this priority level instantly with zero CPU overhead. |
+| `CustomPath` | `string` | Specify an absolute or relative destination folder directory. |
+| `CustomExtension` | `string` | Changes the default `.log` extension to a custom suffix. |
+| `RotateOnFileSizeLimit` | `string` | Triggers rotation instantly when a file meets limits (e.g., `100KB`, `5MB`). |
+| `RotationInterval` | `Enum` | Time-based interval to cycle logs (Minutely, Hourly, Daily, etc.). |
+| `TotalFilesToRetain` | `int` | Maximum log files to keep in history. Set to `0` for unlimited. |
+| `TimeStampFormat` | `Enum` | Select from a comprehensive variety of pre-built layout timestamp headers. |
+| `CustomTimestampFormat` | `string` | Assign a standard .NET DateTime format string when using `Custom`. |
+| `Encoding` | `string` | Supports `utf-8`, `utf-16`, `us-ascii`, `iso-8859-1`, and more. |
+| `EncryptionKey` | `byte[]` / `string` | Auto-detecting property holding the 32-byte AES Encryption Key. |
+| `EncryptionIV` | `byte[]` / `string` | Auto-detecting property holding the 16-byte AES Encryption IV. |
+
+---
+
+# Advanced Encryption Setup
+
+The core writing engines handle data encryption transparently under the hood when keys are assigned, processing lines through standard or explicit interfaces securely.
 
 ```csharp
-
 var options = new LoggerOptions
 {
-    EncryptionKey = "4i02yjt0weitjywm6uvwtewqartq9grj",
+    AutoRoute = true,
+    // Provide Keys as raw strings, Hex, or Base64 - the engine auto-converts cleanly!
+    EncryptionKey = "4i02yjt0weitjywm6uvwtewqartq9grj", 
     EncryptionIV = "lfkdurnb85jdk58g"
 };
 
-var logger = new Logger("", options);
+ILogger logger = new Logger("SecureLog", options);
 
-// decrypt asynchonously and return as string:
-string decrypted_log_contents = await logger.DecryptLogFileAsyncAsString("decrypted text");
+// Text lines passing through here are immediately written into encrypted cipher block formats
+logger.WriteEncryptedLine("Highly sensitive compliance tracking block.");
 
-// decrypt asynchronously and save as a new unencrypted logfile:
+// Or execute in a thread-safe non-blocking async stream
+await logger.WriteEncryptedLineAsync("Asynchronous payload encryption entry.");
+```
+
+### Decrypting Log Archives
+
+```csharp
+// Read an entire encrypted log directly back into plain-text strings
+string clearLogContents = await logger.DecryptLogFileAsyncAsString(encryptedFilePath);
+
+// Or unpack an archived file directly back out into a new unencrypted physical log file
 await logger.DecryptLogFileAsync(encryptedFilePath, destinationPlainFilePath);
 ```
 
-The logger demo project has examples.
-
 ---
 
-# Rotation Intervals
+# Automated Log Routing
 
-Logger supports automatic time-based rotation.
+When `AutoRoute` is enabled, Logger queries the host architecture to ensure logs are written to safe, modern folders matching structural operating system conventions.
 
-| Interval | Description |
-|----------|-------------|
-| Disabled | No time-based rotation |
-| Minutely | New log every minute |
-| Hourly | New log every hour |
-| Daily | New log every day |
-| Weekly | New log every week |
-| Fortnightly | New log every two weeks |
-| Monthly | New log every month |
-| Yearly | New log every year |
+## AutoRoute Structural Target Matrix
 
----
-
-# File Size Rotation
-
-Logger can automatically create a new log file when a file reaches a specified size.
-
-Examples:
-
-```text
-500B
-100KB
-5MB
-250MB
-2GB
-```
-
-Size-based rotation works alongside time-based rotation.
-
----
-
-# File Retention
-
-Prevent log folders from growing indefinitely.
-
-```csharp
-TotalFilesToRetain = 20;
-```
-
-Once the configured limit is reached:
-
-- Oldest log files are automatically deleted
-- New log files continue to be created
-- Rotation continues seamlessly
-
-Set to:
-
-```csharp
-0
-```
-
-for unlimited retention.
-
----
-
-# Timestamp Formats
-
-Logger includes numerous built-in timestamp formats.
-
-Examples include:
-
-| Format | Example |
-|---------|---------|
-| SQL 24 Hour | `2026-07-05 19:42:18` |
-| ISO 8601 | `2026-07-05T19:42:18.123+10:00` |
-| International | `05 Jul 2026 19:42:18` |
-| File Safe | `260705_194218` |
-| Date Only | `05-07-2026` |
-| Time Only | `19:42:18` |
-| 12 Hour | `05/07/2026 07:42 PM` |
-| Custom | Any .NET DateTime format |
-
-Example:
-
-```csharp
-var options = new LoggerOptions
-{
-    TimeStampFormat = LoggerTimestampFormat.Custom,
-    CustomTimestampFormat = "dddd dd MMMM yyyy HH:mm:ss"
-};
-```
-
----
-
-# Automatic Log Routing
-
-When `autoRoute` is enabled, Logger automatically selects an appropriate writable location on the operating system.
-
-If a custom path is supplied, Logger will automatically use that location instead.
-
-```csharp
-autoRoute = true;
-```
-
-or
-
-```csharp
-CustomPath = @"C:\Logs";
-```
-
-## AutoRoute Paths
-
-| Operating System | Path |
-|---------|---------|
-| Windows (Standalone/Console) | `:\Users\<user>\AppData\Local\AppName\Logs` |
-| Windows (Service) | `:\ProgramData\AppName\Logs` |
-| Linux/nix | `/home/<user>/AppName/Logs` |
-| Mac OSX | `Users/username/Library/Application Support/AppName/Logs` |
-| Android | `/data/user/0/[your.package.name]/files/logs` |
-| Fallback | `?UserProfile?/AppName/Logs` |
-| Unsupported | If Fallback fails to yield a value, an exception is thrown |
-
----
-
-# Example Configuration
-
-```csharp
-var options = new LoggerOptions(
-    autoRoute: true,
-    RotationInterval: LoggerRotationInterval.Daily,
-    TotalFilesToRetain: 14,
-    RotateOnFileSizeLimit: "50MB",
-    TimeStampFormat: LoggerTimestampFormat.ISO8601TZOffset
-);
-
-var logger = new Logger("logName", options);
-```
+| Operating System | Context Environment | Target System Path |
+|------------------|---------------------|--------------------|
+| **Windows** | Standalone / Desktop App | `:\Users\<user>\AppData\Local\<AppName>\Logs` |
+| **Windows** | Windows Native Service | `:\ProgramData\<AppName>\Logs` |
+| **Linux** | Universal Console / Server | `/home/<user>/<AppName>/Logs` |
+| **MacOS** | Desktop / App Bundle | `Users/<user>/Library/Application Support/<AppName>/Logs` |
+| **Android** | App Package Storage | `/data/user/0/[package.name]/files/logs` |
 
 ---
 
 # Contributing
 
-Contributions, feature requests, bug reports and pull requests are always welcome.
-
-If you have an idea that would improve Logger, feel free to open an Issue or submit a Pull Request.
+Contributions, optimization reviews, and bug submissions are completely welcome. If you have an implementation design that improves structural efficiency or introduces handy .NET enhancements, feel free to open a GitHub Issue or fork a Pull Request!
 
 ---
 
 # License
 
-This project is licensed under the GPL V3.0 License.
+This project is open source and licensed under the **GPL V3.0 License**.
 
 ---
 
-Created with ❤️ for the .NET community.
+*Engineered with precision and ❤️ for the high-performance .NET community.*

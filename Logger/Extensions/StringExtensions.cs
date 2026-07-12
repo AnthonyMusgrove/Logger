@@ -45,6 +45,44 @@ namespace Labworx.Extensions
             };
         }
 
+        public enum CryptoFormat
+        {
+            PlainText,
+            Hex,
+            Base64
+        }
+
+        /// <summary>
+        /// Converts a cryptographic key or initialization vector string into its raw byte array representation based on the specified encoding format.
+        /// </summary>
+        /// <remarks>
+        /// This method avoids heuristic guessing to ensure cryptographic integrity. 
+        /// Supported formats include:
+        /// <list type="bullet">
+        /// <item><description><see cref="CryptoFormat.PlainText"/>: Converts the raw string directly using UTF-8 encoding (Default).</description></item>
+        /// <item><description><see cref="CryptoFormat.Hex"/>: Decodes a standard hexadecimal string (e.g., 'A1B2C3D4').</description></item>
+        /// <item><description><see cref="CryptoFormat.Base64"/>: Decodes a standard Base64 encoded string (e.g., 'dGhpcy...').</description></item>
+        /// </list>
+        /// </remarks>
+        /// <param name="input">The string representation of the cryptographic key or IV to convert.</param>
+        /// <param name="format">The expected cryptographic encoding format of the input string.</param>
+        /// <returns>A <see cref="T:System.Byte[]"/> containing the converted bytes, or an empty byte array if the input is null, empty, or whitespace.</returns>
+
+        public static byte[] ToCryptographicBytes(this string? input, CryptoFormat format = CryptoFormat.PlainText)
+        {
+            if (string.IsNullOrWhiteSpace(input))
+                return Array.Empty<byte>();
+
+            string trimmed = input.Trim();
+
+            return format switch
+            {
+                CryptoFormat.Hex => Convert.FromHexString(trimmed),
+                CryptoFormat.Base64 => Convert.FromBase64String(trimmed),
+                _ => Encoding.UTF8.GetBytes(trimmed) // Default to PlainText
+            };
+        }
+
 
     }
 }

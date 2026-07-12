@@ -1,6 +1,7 @@
 ﻿using Labworx.Extensions;
 using System;
 using System.Collections.Generic;
+using System.Net.Security;
 using System.Text;
 
 namespace Labworx.Util
@@ -125,8 +126,8 @@ namespace Labworx.Util
 
     public class LoggerOptions
     {
-        private string _encryptionKey = string.Empty;
-        private string _encryptionIV = string.Empty;
+        private byte[] _encryptionKey = Array.Empty<byte>();
+        private byte[] _encryptionIV = Array.Empty<byte>();
 
         /// <summary>
         /// Logger will automatically select the most appropriate location on the system to create the log file.  If a CustomPath is specified, this option is overriden and your CustomPath is used.
@@ -165,46 +166,51 @@ namespace Labworx.Util
         /// <summary>
         /// AES Encryption Key (32 bytes, anything over this length will be dropped)
         /// </summary>
-        public string EncryptionKey
+        public byte[] EncryptionKey
         {
             get => _encryptionKey;
             set
             {
-                if (string.IsNullOrEmpty(value))
+                if (value == null || value.Length < 32)
                 {
-                    _encryptionKey = string.Empty;
-                    return;
+                    throw new ArgumentException("EncryptionKey must be non-null and at least 32 bytes.", nameof(value));
                 }
 
-                if (value.Length < 32)
+                // Allocate the backing array ONLY if it isn't already the correct size
+                if (_encryptionKey.Length != 32)
                 {
-                    throw new ArgumentException("EncryptionKey Length must be at least 32 bytes", nameof(value));
+                    _encryptionKey = new byte[32];
                 }
 
-                _encryptionKey = value.Substring(0, 32);
+                // Zero-allocation memory slice and copy using Spans
+                ReadOnlySpan<byte> sourceSpan = value.AsSpan(0, 32);
+                Span<byte> targetSpan = _encryptionKey.AsSpan();
+                sourceSpan.CopyTo(targetSpan);
             }
         }
-
         /// <summary>
         /// AES Encryption IV (16 bytes, anything over this length will be dropped)
         /// </summary>
-        public string EncryptionIV
+        public byte[] EncryptionIV
         {
             get => _encryptionIV;
             set
             {
-                if (string.IsNullOrEmpty(value))
+                if (value == null || value.Length < 16)
                 {
-                    _encryptionIV = string.Empty;
-                    return;
+                    throw new ArgumentException("EncryptionIV must be non-null and at least 16 bytes.", nameof(value));
                 }
 
-                if (value.Length < 16)
+                // Allocate the backing array ONLY if it isn't already the correct size
+                if (_encryptionIV.Length != 16)
                 {
-                    throw new ArgumentException("EncryptionIV Length must be at least 16 bytes", nameof(value));
+                    _encryptionIV = new byte[16];
                 }
 
-                _encryptionIV = value.Substring(0, 16);
+                // Zero-allocation memory slice and copy using Spans
+                ReadOnlySpan<byte> sourceSpan = value.AsSpan(0, 16);
+                Span<byte> targetSpan = _encryptionIV.AsSpan();
+                sourceSpan.CopyTo(targetSpan);
             }
         }
 
@@ -215,7 +221,21 @@ namespace Labworx.Util
         public LoggerRotationInterval RotationInterval { get; set; } = LoggerRotationInterval.Disabled;
 
         public LoggerTimestampFormat TimeStampFormat { get; set; } = LoggerTimestampFormat.DateTime24HrFormatSQL;
+
+        /// <summary>
+        /// Custom Timestamp Format, this will only apply if <paramref name="TimeStampFormat"/> is set to Custom.
+        /// Default:  LogLevel.Info
+        /// </summary>
         public string CustomTimestampFormat { get; set; } = "";
+
+        /// <summary>
+        /// Log Severity
+        /// Default:  LogLevel.Info
+        /// </summary>
+        public LogLevel logLevel { get; set; } = LogLevel.Info;
+
+        public WriteProtectionMode ProtectionMode { get; set; } = WriteProtectionMode.Plaintext;
+
 
         public LoggerOptions()
         {

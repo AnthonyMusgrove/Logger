@@ -1,4 +1,5 @@
 ﻿using Labworx;
+using Labworx.Extensions;
 using Labworx.Util;
 using System;
 using System.Collections.Generic;
@@ -64,8 +65,8 @@ namespace LoggerDemo
 
             var _loggerOptions = new LoggerOptions()
             {
-                EncryptionKey = this.txtEncryptionKey.Text,
-                EncryptionIV = this.txtEncryptionIV.Text
+                EncryptionKey = this.txtEncryptionKey.Text.ToCryptographicBytes(),
+                EncryptionIV = this.txtEncryptionIV.Text.ToCryptographicBytes()
             };
 
             Logger _logger = new Logger("", _loggerOptions);
@@ -87,11 +88,16 @@ namespace LoggerDemo
                 File.WriteAllText(this.dialogSaveLog.FileName, this.txtLogFile.Text);
                 MessageBox.Show($"Successfully saved the log content to file: {this.dialogSaveLog.FileName}", "Success!", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
-            catch(Exception ex)
+            catch (Exception ex)
             {
                 MessageBox.Show($"Error occured trying to save file out: {ex.Message}", "Error:", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
+        }
+
+        private void btnClose_Click(object sender, EventArgs e)
+        {
+            this.Close();
         }
     }
 }

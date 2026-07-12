@@ -1,85 +1,121 @@
 ﻿using Labworx.Extensions;
 using Labworx.Util;
 using Microsoft.Extensions.Hosting.WindowsServices;
-using Microsoft.Extensions.Options;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using static System.Environment;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace Labworx
 {
-    public class Logger : IDisposable
+    /// <summary>
+    /// Provides a thread-safe, high-performance, asynchronous logging engine featuring auto-routing, 
+    /// cryptographic write protection (AES), diagnostic log levels, and automatic file rotation.
+    /// </summary>
+    public class Logger : ILogger, IDisposable
     {
-        private readonly object _lockObject = new object();
+        private readonly SemaphoreSlim _lockSemaphore = new SemaphoreSlim(1, 1);
         private readonly CancellationTokenSource _cts = new CancellationTokenSource();
 
+        /// <summary>
+        /// Occurs when the logger completes its initialization sequence.
+        /// </summary>
         public event EventHandler<LoggerEventArgs>? onInitialize;
+
+        /// <summary>
+        /// Occurs when an unhandled exception is caught during file operations or encryption routines.
+        /// </summary>
         public event EventHandler<LoggerErrorEventArgs>? onError;
+
+        /// <summary>
+        /// Occurs when an active log file meets rotation criteria and gets archived.
+        /// </summary>
         public event EventHandler<LoggerRolloverEventArgs>? onRollover;
+
+        /// <summary>
+        /// Occurs when a brand new target log file is physically generated on disk.
+        /// </summary>
         public event EventHandler<LoggerEventArgs>? onCreateNewLogfile;
 
+        /// <summary>
+        /// Gets or sets the alphanumeric base identifier for the generated log files.
+        /// </summary>
         public string LogName { get; set; } = "";
+
+        /// <summary>
+        /// Gets or sets the fully qualified directory path where active and archived logs are stored.
+        /// </summary>
         public string LogFilePath { get; set; } = "";
 
         private bool _IsInitialised = false;
         private LoggerOptions _options = new LoggerOptions();
         private string _currentWriteFile = "";
-        private bool disposedValue;
+        private bool _disposedValue;
 
-        // Both constructors now properly chain together to ensure the timer starts
+        /// <summary>
+        /// Initializes a new instance of the <see cref="Logger"/> class using default configuration profiles.
+        /// </summary>
+        /// <param name="logName">The base file name token for the logs.</param>
         public Logger(string logName) : this(logName, new LoggerOptions())
         {
         }
 
+        /// <summary>
+        /// Initializes a new instance of the <see cref="Logger"/> class with explicit configuration controls.
+        /// </summary>
+        /// <param name="logName">The base file name token for the logs.</param>
+        /// <param name="options">The detailed behavior configuration schema to apply.</param>
         public Logger(string logName, LoggerOptions options)
         {
-            this.LogName = logName;
-            this._options = options;
-            this._IsInitialised = this._Init();
+            LogName = logName;
+            _options = options;
+            _IsInitialised = _Init();
 
-            if (this._IsInitialised)
+            if (_IsInitialised)
             {
                 _ = StartRolloverTimerAsync(_cts.Token);
             }
         }
 
+        /// <summary>
+        /// Executes underlying environment analysis, constructs necessary directory hierarchies, and verifies file layouts.
+        /// </summary>
+        /// <returns><see langword="true"/> if directories are set up and target files are synchronized; otherwise, <see langword="false"/>.</returns>
         private bool _Init()
         {
-            if (this._IsInitialised) return true;
+            if (_IsInitialised) return true;
 
-            if (this.LogName.Contains('_'))
-                this.LogName = this.LogName.Replace("_", "-");
+            if (LogName.Contains('_'))
+                LogName = LogName.Replace("_", "-");
 
-            if (this._options.AutoRoute)
+            if (_options.AutoRoute)
             {
                 string appName = Assembly.GetEntryAssembly()?.GetName().Name ?? "LabworxLogger";
 
                 if (OperatingSystem.IsWindows())
                 {
-                    this.LogFilePath = WindowsServiceHelpers.IsWindowsService()
+                    LogFilePath = WindowsServiceHelpers.IsWindowsService()
                         ? Path.Combine(Environment.GetFolderPath(SpecialFolder.CommonApplicationData), appName, "Logs")
                         : Path.Combine(Environment.GetFolderPath(SpecialFolder.LocalApplicationData), appName, "Logs");
                 }
                 else if (OperatingSystem.IsAndroid())
                 {
-                    this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), "files", "logs");
+                    LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), "files", "logs");
                 }
                 else if (OperatingSystem.IsLinux())
                 {
-                    this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), appName, "Logs");
+                    LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.UserProfile), appName, "Logs");
                 }
                 else if (OperatingSystem.IsMacOS() || OperatingSystem.IsMacCatalyst())
                 {
-                    this.LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.LocalApplicationData), appName, "Logs");
+                    LogFilePath = Path.Combine(Environment.GetFolderPath(SpecialFolder.LocalApplicationData), appName, "Logs");
                 }
                 else
                 {
                     string userProfile = Environment.GetFolderPath(SpecialFolder.UserProfile);
                     if (!string.IsNullOrEmpty(userProfile))
                     {
-                        this.LogFilePath = Path.Combine(userProfile, appName, "Logs");
+                        LogFilePath = Path.Combine(userProfile, appName, "Logs");
                     }
                     else
                     {
@@ -89,7 +125,7 @@ namespace Labworx
             }
             else
             {
-                this.LogFilePath = this._options.CustomPath;
+                LogFilePath = _options.CustomPath;
             }
 
             try
@@ -98,21 +134,29 @@ namespace Labworx
             }
             catch (Exception ex)
             {
-                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
+                onError?.Invoke(this, new LoggerErrorEventArgs(_currentWriteFile, ex));
                 return false;
             }
 
-            lock (_lockObject)
+            _lockSemaphore.Wait();
+            try
             {
-                this.ProcessRollover();
+                ProcessRollover();
+            }
+            finally
+            {
+                _lockSemaphore.Release();
             }
 
-            this.onInitialize?.Invoke(this, new LoggerEventArgs(this._currentWriteFile));
-            this._IsInitialised = true;
+            onInitialize?.Invoke(this, new LoggerEventArgs(_currentWriteFile));
+            _IsInitialised = true;
 
             return true;
         }
 
+        /// <summary>
+        /// Hosts the asynchronous background interval ticker responsible for scheduling routine file-age rotations.
+        /// </summary>
         private async Task StartRolloverTimerAsync(CancellationToken cancellationToken)
         {
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(10));
@@ -120,18 +164,27 @@ namespace Labworx
             {
                 while (await timer.WaitForNextTickAsync(cancellationToken))
                 {
-                    lock (_lockObject)
+                    await _lockSemaphore.WaitAsync(cancellationToken);
+                    try
                     {
-                        this.ProcessRollover();
+                        ProcessRollover();
+                    }
+                    finally
+                    {
+                        _lockSemaphore.Release();
                     }
                 }
             }
             catch (OperationCanceledException) { }
         }
 
+        /// <summary>
+        /// Evaluates active file sizing constraints and runtime time-deltas against user parameters, performing file rotation if necessary.
+        /// </summary>
+        /// <returns><see langword="true"/> if file modifications occurred; otherwise, <see langword="false"/>.</returns>
         private bool ProcessRollover()
         {
-            var opt = this._options;
+            var opt = _options;
             if (opt.RotationInterval == LoggerRotationInterval.Disabled &&
                 opt.TotalFilesToRetain == 0 &&
                 string.IsNullOrEmpty(opt.RotateOnFileSizeLimit))
@@ -140,19 +193,19 @@ namespace Labworx
             }
 
             string extension = string.IsNullOrEmpty(opt.CustomExtension) ? "log" : opt.CustomExtension;
-            this._currentWriteFile = Path.Combine(this.LogFilePath, $"{this.LogName}.{extension}");
+            _currentWriteFile = Path.Combine(LogFilePath, $"{LogName}.{extension}");
 
-            if (!File.Exists(this._currentWriteFile))
+            if (!File.Exists(_currentWriteFile))
             {
-                this.touchNew("Initial logfile in set");
+                touchNew("Initial logfile in set");
             }
 
-            FileInfo newestLogFile = new FileInfo(this._currentWriteFile);
-            List<FileInfo> currentFileSet = this.getCurrentFileSet();
+            FileInfo newestLogFile = new FileInfo(_currentWriteFile);
+            List<FileInfo> currentFileSet = getCurrentFileSet();
             currentFileSet.Insert(0, newestLogFile);
 
             string timestamp = DateTime.Now.ToString("yyyy_MM_dd_HHmmss");
-            string archiveFilename = Path.Combine(this.LogFilePath, $"{this.LogName}_{timestamp}.{extension}");
+            string archiveFilename = Path.Combine(LogFilePath, $"{LogName}_{timestamp}.{extension}");
 
             try
             {
@@ -162,9 +215,10 @@ namespace Labworx
                     long maxBytes = opt.RotateOnFileSizeLimit.toLongFileSize();
                     if (newestLogFile.Length >= maxBytes)
                     {
-                        File.Move(this._currentWriteFile, archiveFilename);
-                        this.touchNew(ref currentFileSet, $"Filesize Rotation Size> {opt.RotateOnFileSizeLimit}");
-                        this.onRollover?.Invoke(this, new LoggerRolloverEventArgs(this._currentWriteFile, LoggerRolloverEventArgs.RolloverReason.FileSizeLimitHit, archiveFilename));
+                        File.Move(_currentWriteFile, archiveFilename);
+                        touchNew(currentFileSet, $"Filesize Rotation Size> {opt.RotateOnFileSizeLimit}");
+                        onRollover?.Invoke(this, new LoggerRolloverEventArgs(_currentWriteFile, LoggerRolloverEventArgs.RolloverReason.FileSizeLimitHit, archiveFilename));
+                        PruneOldFiles(currentFileSet);
                         return true;
                     }
                 }
@@ -182,303 +236,370 @@ namespace Labworx
                         LoggerRotationInterval.Fortnightly => age.TotalDays > 14,
                         LoggerRotationInterval.Monthly => age.TotalDays > 30.41,
                         LoggerRotationInterval.Yearly => age.TotalDays > 365,
+
                         _ => false
                     };
-
                     if (rotationRequired)
                     {
-                        File.Move(this._currentWriteFile, archiveFilename);
-                        this.touchNew(ref currentFileSet, $"{opt.RotationInterval} Rotation");
-                        this.onRollover?.Invoke(this, new LoggerRolloverEventArgs(this._currentWriteFile, LoggerRolloverEventArgs.RolloverReason.RolloverIntervalHit, archiveFilename));
+                        File.Move(_currentWriteFile, archiveFilename);
+                        touchNew(currentFileSet, $"Interval Rotation Type: {opt.RotationInterval}");
+                        onRollover?.Invoke(this, new LoggerRolloverEventArgs(_currentWriteFile, LoggerRolloverEventArgs.RolloverReason.RolloverIntervalHit, archiveFilename));
+                        PruneOldFiles(currentFileSet);
                         return true;
                     }
                 }
-
-                // 3. File Set Pruning
-                if (opt.TotalFilesToRetain > 0 && currentFileSet.Count > opt.TotalFilesToRetain)
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(this, new LoggerErrorEventArgs(_currentWriteFile, ex));
+            }
+            return false;
+        }
+        /// 
+        /// Discovers all existing historical log archives belonging to the current base tracking identity.
+        /// 
+        /// A sorted collection of tracked file profiles, descending from newest to oldest.
+        private List<FileInfo> getCurrentFileSet()
+        {
+            string extension = string.IsNullOrEmpty(_options.CustomExtension) ? "log" : _options.CustomExtension;
+            var dir = new DirectoryInfo(LogFilePath);
+            if (!dir.Exists) return new List<FileInfo>();
+            return dir.GetFiles($"{LogName}_*.{extension}")
+            .OrderByDescending(f => f.CreationTime)
+            .ToList();
+        }
+        /// 
+        /// Generates a blank physical file payload container on disk using standalone reasoning hooks.
+        /// 
+        /// The descriptive source cause prompting the action block.
+        private void touchNew(string reason)
+        {
+            var set = new List<FileInfo>();
+            touchNew(set, reason);
+        }
+        /// 
+        /// Formulates a physical file descriptor while hard-smashing OS cache handles to preserve true cross-platform timestamp integrity.
+        /// 
+        /// The reference array collection tracking active archives.
+        /// The logging event condition driving the update request.
+        private void touchNew(List<FileInfo> currentFileSet, string reason)
+        {
+            try
+            {
+                using (var fs = File.Create(_currentWriteFile)) { }
+                // Explicitly resets system creation handles to crush Windows OS metadata tunneling traps
+                File.SetCreationTime(_currentWriteFile, DateTime.Now);
+                var fileInfo = new FileInfo(_currentWriteFile);
+                currentFileSet.Insert(0, fileInfo);
+                onCreateNewLogfile?.Invoke(this, new LoggerEventArgs(_currentWriteFile));
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(this, new LoggerErrorEventArgs(_currentWriteFile, ex));
+            }
+        }
+        /// 
+        /// Clears out historic structural logs if total disk trace entries exceed configured retention allocations.
+        /// 
+        /// The full history layout map of target files.
+        private void PruneOldFiles(List<FileInfo> currentFileSet)
+        {
+            if (_options.TotalFilesToRetain <= 0 || currentFileSet.Count <= _options.TotalFilesToRetain)
+                return;
+            for (int i = _options.TotalFilesToRetain; i < currentFileSet.Count; i++)
+            {
+                try
                 {
-                    while (currentFileSet.Count > opt.TotalFilesToRetain)
+                    if (currentFileSet[i].Exists)
                     {
-                        FileInfo oldestFile = currentFileSet.Last();
-                        if (File.Exists(oldestFile.FullName))
+                        currentFileSet[i].Delete();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    onError?.Invoke(this, new LoggerErrorEventArgs(currentFileSet[i].FullName, ex));
+                }
+            }
+        }
+        #region Route Core Helpers
+        /// 
+        /// Centralizes runtime metadata timestamp processing and routes the finalized context packet cleanly to the appropriate disk stream layer.
+        /// 
+        private void LogMessage(string message)
+        {
+            string formatString = _options.TimeStampFormat.LoggerMeta()?.Format ?? "yyyy-MM-dd HH:mm:ss";
+            string formattedLog = $"{DateTime.Now.ToString(formatString)}: {message}";
+            if (_options.ProtectionMode == WriteProtectionMode.Plaintext)
+            {
+                WriteLine(formattedLog);
+            }
+            else
+            {
+                WriteEncryptedLine(formattedLog);
+            }
+        }
+        /// 
+        /// Asynchronously centralizes runtime metadata timestamp processing and directly targets the correct async disk output layer.
+        /// 
+        private Task LogMessageAsync(string message)
+        {
+            string formatString = _options.TimeStampFormat.LoggerMeta()?.Format ?? "yyyy-MM-dd HH:mm:ss";
+            string formattedLog = $"{DateTime.Now.ToString(formatString)}: {message}";
+            return _options.ProtectionMode == WriteProtectionMode.Plaintext
+            ? WriteLineAsync(formattedLog)
+            : WriteEncryptedLineAsync(formattedLog);
+        }
+        #endregion
+        #region Interface Configuration Runtime Mutators
+        /// 
+        /// Dynmically adjustments runtime tracking rules to intercept messages targeting the defined severity threshold.
+        /// 
+        /// The new core logging diagnostic limit filter level.
+        public void setLogLevel(LogLevel level)
+        {
+            _options.logLevel = level;
+        }
+        /// 
+        /// Dynamically transitions the logging security context between text output and secure stream output configurations on-the-fly.
+        /// 
+        /// The target security protection standard mode to enact.
+        /// The alphanumeric passphrase raw seed for encryption matrices.
+        /// The initialization vector raw text component.
+        public void setProtectionMode(WriteProtectionMode mode, string? aesKey = null, string? aesIV = null)
+        {
+            _options.ProtectionMode = mode;
+            if (mode != WriteProtectionMode.Plaintext)
+            {
+                _options.EncryptionKey = aesKey == null
+                ? Array.Empty<byte>()
+                : Encoding.UTF8.GetBytes(aesKey)[..Math.Min(aesKey.Length, 32)];
+                _options.EncryptionIV = aesIV == null
+                ? Array.Empty<byte>()
+                : Encoding.UTF8.GetBytes(aesIV)[..Math.Min(aesIV.Length, 16)];
+            }
+        }
+        #endregion
+        #region Synchronous Logging API
+        /// Logs a catastrophic application state mapping error via the primary pipeline channel.
+        public void Fatal(string data) { if (_options.logLevel >= LogLevel.Fatal) LogMessage($"FATAL: {data}"); }
+        /// Logs a typical runtime operational fault requiring attention via the primary channel.
+        public void Error(string data) { if (_options.logLevel >= LogLevel.Error) LogMessage($"ERROR: {data}"); }
+        /// Logs a non-blocking suspicious development issue state warning mapping trace.
+        public void Warn(string data) { if (_options.logLevel >= LogLevel.Warn) LogMessage($"WARN: {data}"); }
+        /// Logs general runtime operations diagnostic checkpoints.
+        public void Info(string data) { if (_options.logLevel >= LogLevel.Info) LogMessage($"INFO: {data}"); }
+        /// Logs fine-grained system details useful during debugging development.
+        public void Debug(string data) { if (_options.logLevel >= LogLevel.Debug) LogMessage($"DEBUG: {data}"); }
+        /// Logs hyper-detailed trace elements regarding program control-flow steps.
+        public void Trace(string data) { if (_options.logLevel >= LogLevel.Trace) LogMessage($"TRACE: {data}"); }
+        #endregion
+        #region Asynchronous Logging API
+        /// Asynchronously records a catastrophic application pipeline level fault trace.
+        public Task FatalAsync(string data) => _options.logLevel < LogLevel.Fatal ? Task.CompletedTask : LogMessageAsync($"FATAL: {data}");
+        /// Asynchronously records a standard critical validation operational error marker.
+        public Task ErrorAsync(string data) => _options.logLevel < LogLevel.Error ? Task.CompletedTask : LogMessageAsync($"ERROR: {data}");
+        /// Asynchronously records a normal operational warning trace profile step.
+        public Task WarnAsync(string data) => _options.logLevel < LogLevel.Warn ? Task.CompletedTask : LogMessageAsync($"WARN: {data}");
+        /// Asynchronously records standard tracking milestone confirmations.
+        public Task InfoAsync(string data) => _options.logLevel < LogLevel.Info ? Task.CompletedTask : LogMessageAsync($"INFO: {data}");
+        /// Asynchronously records deeper internal validation engine control details.
+        public Task DebugAsync(string data) => _options.logLevel < LogLevel.Debug ? Task.CompletedTask : LogMessageAsync($"DEBUG: {data}");
+        /// Asynchronously records complex instruction stack execution states.
+        public Task TraceAsync(string data) => _options.logLevel < LogLevel.Trace ? Task.CompletedTask : LogMessageAsync($"TRACE: {data}");
+        #endregion
+        #region Low-Level IO Engine
+        /// 
+        /// Commits standard line records directly to text files on physical media using strict semaphore protection.
+        /// 
+        /// The payload message string to register.
+        public void WriteLine(string message)
+        {
+            _lockSemaphore.Wait();
+            try
+            {
+                File.AppendAllText(_currentWriteFile, message + Environment.NewLine, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(this, new LoggerErrorEventArgs(_currentWriteFile, ex));
+            }
+            finally
+            {
+                _lockSemaphore.Release();
+            }
+        }
+        /// 
+        /// Asynchronously commits raw text line components directly to disk using async semaphore hooks.
+        /// 
+        /// The payload message string to register.
+        public async Task WriteLineAsync(string message)
+        {
+            await _lockSemaphore.WaitAsync(_cts.Token);
+            try
+            {
+                await File.AppendAllTextAsync(_currentWriteFile, message + Environment.NewLine, Encoding.UTF8, _cts.Token);
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(this, new LoggerErrorEventArgs(_currentWriteFile, ex));
+            }
+            finally
+            {
+                _lockSemaphore.Release();
+            }
+        }
+        /// 
+        /// Transforms message content via AES algorithms and appends the secure Hex representation to disk.
+        /// 
+        /// The string information block to protect.
+        public void WriteEncryptedLine(string message)
+        {
+            _lockSemaphore.Wait();
+            try
+            {
+                byte[] encryptedBytes = EncryptStringToBytes(message);
+                string outText = Convert.ToHexString(encryptedBytes) + Environment.NewLine;
+                File.AppendAllText(_currentWriteFile, outText, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(this, new LoggerErrorEventArgs(_currentWriteFile, ex));
+            }
+            finally
+            {
+                _lockSemaphore.Release();
+            }
+        }
+        /// 
+        /// Asynchronously transforms message text into secure cryptograms, writing Hex strings to physical media.
+        /// 
+        /// The string information block to protect.
+        public async Task WriteEncryptedLineAsync(string message)
+        {
+            await _lockSemaphore.WaitAsync(_cts.Token);
+            try
+            {
+                byte[] encryptedBytes = EncryptStringToBytes(message);
+                string outText = Convert.ToHexString(encryptedBytes) + Environment.NewLine;
+                await File.AppendAllTextAsync(_currentWriteFile, outText, Encoding.UTF8, _cts.Token);
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(this, new LoggerErrorEventArgs(_currentWriteFile, ex));
+            }
+            finally
+            {
+                _lockSemaphore.Release();
+            }
+        }
+        /// 
+        /// Internal symmetric key encryption engine converting raw strings into cipher bytes via hardware-accelerated AES parameters.
+        /// 
+        private byte[] EncryptStringToBytes(string plainText)
+        {
+            if (_options.EncryptionKey == null || _options.EncryptionKey.Length == 0)
+                return Encoding.UTF8.GetBytes(plainText);
+            using Aes aes = Aes.Create();
+            aes.Key = _options.EncryptionKey;
+            aes.IV = _options.EncryptionIV ?? Array.Empty<byte>();
+            using MemoryStream ms = new MemoryStream();
+            using (CryptoStream cs = new CryptoStream(ms, aes.CreateEncryptor(), CryptoStreamMode.Write))
+            using (StreamWriter sw = new StreamWriter(cs, Encoding.UTF8))
+            {
+                sw.Write(plainText);
+            }
+            return ms.ToArray();
+        }
+
+        /// <summary>
+        /// Asynchronously parses hybrid plain-text or cryptographic log files line-by-line, exposing a clean, decrypted clear text output string.
+        /// </summary>
+        /// <param name="filePath">The targeted file path location of the log file to analyze.</param>
+        /// <returns>A <see cref="Task{TResult}"/> representing the asynchronous operation, containing a unified block string of cleartext data representations.</returns>
+        public async Task<string> DecryptLogFileAsyncAsString(string filePath)
+        {
+            if (!File.Exists(filePath))
+                return "Log file not found.";
+            var sb = new StringBuilder();
+            await _lockSemaphore.WaitAsync(_cts.Token);
+            try
+            {
+                string[] lines = await File.ReadAllLinesAsync(filePath, Encoding.UTF8, _cts.Token);
+                foreach (string line in lines)
+                {
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    if (line.Length % 2 == 0 && System.Text.RegularExpressions.Regex.IsMatch(line, @"\A[0-9a-fA-F]+\z"))
+                    {
+                        try
                         {
-                            File.Delete(oldestFile.FullName);
+                            byte[] cipherBytes = Convert.FromHexString(line);
+                            string decryptedLine = DecryptBytesToString(cipherBytes);
+                            sb.AppendLine(decryptedLine);
                         }
-                        currentFileSet.RemoveAt(currentFileSet.Count - 1);
+                        catch
+                        {
+                            sb.AppendLine(line);
+                        }
+                    }
+                    else
+                    {
+                        sb.AppendLine(line);
                     }
                 }
             }
             catch (Exception ex)
             {
-                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-                return false;
+                onError?.Invoke(this, new LoggerErrorEventArgs(filePath, ex));
+                return $"Error reading log file: {ex.Message}";
             }
-
-            return true;
+            finally
+            {
+                _lockSemaphore.Release();
+            }
+            return sb.ToString();
         }
-
-        private void touchNew(string newFileReason = "")
+        /// 
+        /// Decrypts targeted cryptogram payloads using current live memory symmetric parameters back into clear text.
+        /// 
+        private string DecryptBytesToString(byte[] cipherText)
         {
-            try
-            {
-                using (File.Create(this._currentWriteFile)) { }
-                File.SetCreationTime(this._currentWriteFile, DateTime.Now);
-
-//                File.AppendAllText(this._currentWriteFile, $"{DateTime.Now}: Created new log file. [{newFileReason}]{Environment.NewLine}");
-                this.onCreateNewLogfile?.Invoke(this, new LoggerEventArgs(this._currentWriteFile));
-            }
-            catch (Exception ex)
-            {
-                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-            }
+            if (_options.EncryptionKey == null || _options.EncryptionKey.Length == 0)
+                return Encoding.UTF8.GetString(cipherText);
+            using Aes aes = Aes.Create();
+            aes.Key = _options.EncryptionKey;
+            aes.IV = _options.EncryptionIV ?? Array.Empty<byte>();
+            using MemoryStream ms = new MemoryStream(cipherText);
+            using CryptoStream cs = new CryptoStream(ms, aes.CreateDecryptor(), CryptoStreamMode.Read);
+            using StreamReader sr = new StreamReader(cs, Encoding.UTF8);
+            return sr.ReadToEnd();
         }
-
-
-        private void touchNew(ref List<FileInfo> currentFileSet, string newFileReason = "")
-        {
-            try
-            {
-                using (File.Create(this._currentWriteFile)) { }
-                File.SetCreationTime(this._currentWriteFile, DateTime.Now);
-                currentFileSet.Insert(0, new FileInfo(this._currentWriteFile));
-//                File.AppendAllText(this._currentWriteFile, $"{DateTime.Now}: Created new log file. [{newFileReason}]{Environment.NewLine}");
-                this.onCreateNewLogfile?.Invoke(this, new LoggerEventArgs(this._currentWriteFile));
-            }
-            catch (Exception ex)
-            {
-                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-            }
-        }
-        public async Task WriteAsync(string Data)
-        {
-            try
-            {
-                LoggerTimestampFormat tf = this._options.TimeStampFormat;
-                string formattedLog = $"{DateTime.Now.ToString(tf.LoggerMeta().Format)}: {Data}";
-                string targetFile;
-                lock (_lockObject)
-                {
-                    targetFile = this._currentWriteFile;
-                }
-                await File.AppendAllTextAsync(targetFile, formattedLog, this._options.encoding);
-            }
-            catch (Exception ex)
-            {
-                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-            }
-        }
-        public async Task WriteLineAsync(string Data)
-        {
-            await this.WriteAsync($"{Data}{Environment.NewLine}");
-        }
-
-        public void Write(string Data)
-        {
-            try
-            {
-                LoggerTimestampFormat tf = this._options.TimeStampFormat;
-                string formattedLog = $"{DateTime.Now.ToString(tf.LoggerMeta().Format)}: {Data}";
-                string targetFile;
-                lock (_lockObject)
-                {
-                    targetFile = this._currentWriteFile;
-                }
-                File.AppendAllText(targetFile, formattedLog, this._options.encoding);
-            }
-            catch (Exception ex)
-            {
-                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-            }
-        }
-        public void WriteLine(string Data)
-        {
-            this.Write($"{Data}{Environment.NewLine}");
-        }
-        private List<FileInfo> getCurrentFileSet()
-        {
-            string extension = string.IsNullOrEmpty(_options.CustomExtension) ? "log" : _options.CustomExtension;
-            var di = new DirectoryInfo(this.LogFilePath);
-            if (!di.Exists) return new List<FileInfo>();
-            return di.GetFiles($"{this.LogName}_*.{extension}")
-            .OrderByDescending(f => f.CreationTime)
-            .ToList();
-        }
+        #endregion
+        #region Disposal Infrastructure
+        /// 
+        /// Clears native threading constructs, cancels active interval tokens, and flushes core file streams.
+        /// 
+        /// if managed components should be safely recycled; otherwise, .
         protected virtual void Dispose(bool disposing)
         {
-            if (!disposedValue)
+            if (!_disposedValue)
             {
                 if (disposing)
                 {
                     _cts.Cancel();
                     _cts.Dispose();
+                    _lockSemaphore.Dispose();
                 }
-                disposedValue = true;
+                _disposedValue = true;
             }
         }
+        /// 
+        /// Releases all processing resources actively utilized by the instance context.
+        /// 
         public void Dispose()
         {
             Dispose(disposing: true);
             GC.SuppressFinalize(this);
         }
-
-
-        private string EncryptLine(string plainText)
-        {
-            if (string.IsNullOrEmpty(this._options.EncryptionKey) || this._options.EncryptionKey.Length < 32 ||
-                string.IsNullOrEmpty(this._options.EncryptionIV) || this._options.EncryptionIV.Length < 16)
-            {
-                return plainText;
-            }
-
-            string safeKeyStr = this._options.EncryptionKey.Substring(0, 32);
-            string safeIvStr = this._options.EncryptionIV.Substring(0, 16);
-
-            using (Aes aes = Aes.Create())
-            {
-                aes.Key = Encoding.UTF8.GetBytes(safeKeyStr);
-                aes.IV = Encoding.UTF8.GetBytes(safeIvStr);
-
-                using (MemoryStream ms = new MemoryStream())
-                {
-                    using (CryptoStream cs = new CryptoStream(ms, aes.CreateEncryptor(), CryptoStreamMode.Write))
-                    {
-                        byte[] plainBytes = Encoding.UTF8.GetBytes(plainText);
-                        cs.Write(plainBytes, 0, plainBytes.Length);
-                        cs.FlushFinalBlock();
-                    }
-
-                    return Convert.ToBase64String(ms.ToArray());
-                }
-            }
-        }
-
-        public async Task DecryptLogFileAsync(string encryptedFilePath, string destinationPlainFilePath)
-        {
-            if (!File.Exists(encryptedFilePath))
-                throw new FileNotFoundException("Target encrypted log file not found.", encryptedFilePath);
-
-            using (StreamReader reader = new StreamReader(encryptedFilePath, Encoding.UTF8))
-            using (StreamWriter writer = new StreamWriter(destinationPlainFilePath, false, Encoding.UTF8))
-            {
-                string? encryptedLine;
-                while ((encryptedLine = await reader.ReadLineAsync()) != null)
-                {
-                    if (string.IsNullOrWhiteSpace(encryptedLine)) continue;
-
-                    string decryptedLine = this.DecryptLine(encryptedLine, this._options.EncryptionKey, this._options.EncryptionIV);
-
-                    await writer.WriteAsync(decryptedLine);
-                }
-            }
-        }
-
-        public async Task<string> DecryptLogFileAsyncAsString(string encryptedFilePath)
-        {
-            if (!File.Exists(encryptedFilePath))
-                throw new FileNotFoundException("Target encrypted log file not found.", encryptedFilePath);
-
-            string decrypted_logfile = string.Empty;
-
-            using (StreamReader reader = new StreamReader(encryptedFilePath, Encoding.UTF8))
-            {
-                string? encryptedLine;
-                while ((encryptedLine = await reader.ReadLineAsync()) != null)
-                {
-                    if (string.IsNullOrWhiteSpace(encryptedLine)) continue;
-
-                    decrypted_logfile += DecryptLine(encryptedLine, this._options.EncryptionKey, this._options.EncryptionIV);
-                }
-            }
-
-            return (decrypted_logfile);
-        }
-
-        public string DecryptLine(string cipherText, string encryptionKey, string encryptionIV)
-        {
-            if (string.IsNullOrWhiteSpace(cipherText)) {
-                return string.Empty; 
-            }
-
-            if (string.IsNullOrEmpty(this._options.EncryptionKey) || this._options.EncryptionKey.Length < 32 ||
-            string.IsNullOrEmpty(this._options.EncryptionIV) || this._options.EncryptionIV.Length < 16)
-            {
-            }
-
-            string safeKeyStr = this._options.EncryptionKey.Substring(0, 32);
-            string safeIvStr = this._options.EncryptionIV.Substring(0, 16);
-
-            try
-            {
-                using (Aes aes = Aes.Create())
-                {
-                    aes.Key = Encoding.UTF8.GetBytes(safeKeyStr);
-                    aes.IV = Encoding.UTF8.GetBytes(safeIvStr);
-
-                    using (MemoryStream ms = new MemoryStream(Convert.FromBase64String(cipherText.Trim())))
-                    {
-                        using (CryptoStream cs = new CryptoStream(ms, aes.CreateDecryptor(), CryptoStreamMode.Read))
-                        {
-                            using (StreamReader sr = new StreamReader(cs, Encoding.UTF8))
-                            {
-                                return sr.ReadToEnd();
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception)
-            {
-                // Returns an indicator or throws if the line is corrupted or tampered with
-                return "[CORRUPTED OR INVALID LOG LINE]";
-            }
-        }
-
-        public async Task WriteEncryptedLineAsync(string Data)
-        {
-            try
-            {
-                LoggerTimestampFormat tf = this._options.TimeStampFormat;
-
-                string formattedLog = $"{DateTime.Now.ToString(tf.LoggerMeta().Format)}: {Data}{Environment.NewLine}";
-
-                string encryptedLine = EncryptLine(formattedLog) + Environment.NewLine;
-                string targetFile;
-
-                lock (_lockObject)
-                {
-                    targetFile = this._currentWriteFile;
-                }
-
-                await File.AppendAllTextAsync(targetFile, encryptedLine, Encoding.UTF8);
-            }
-            catch (Exception ex)
-            {
-                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-            }
-        }
-
-        public void WriteEncryptedLine(string Data)
-        {
-            try
-            {
-                LoggerTimestampFormat tf = this._options.TimeStampFormat;
-                string formattedLog = $"{DateTime.Now.ToString(tf.LoggerMeta().Format)}: {Data}{Environment.NewLine}";
-
-                string encryptedLine = EncryptLine(formattedLog) + Environment.NewLine;
-                string targetFile;
-
-                lock (_lockObject)
-                {
-                    targetFile = this._currentWriteFile;
-                }
-
-                File.AppendAllText(targetFile, encryptedLine, Encoding.UTF8);
-            }
-            catch (Exception ex)
-            {
-                this.onError?.Invoke(this, new LoggerErrorEventArgs(this._currentWriteFile, ex));
-            }
-        }
-
+        #endregion
     }
 }

@@ -24,7 +24,9 @@ namespace LoggerDemo
         public String encoding { get; set;  } = "utf-8";
         public String encryptionKey { get; set; } = string.Empty;
         public String encryptionIv { get; set; } = string.Empty;
-        public Boolean enableEncryption { get; set; } = false;
+        public WriteProtectionMode writeProtectionMode { get; set; } = WriteProtectionMode.Plaintext;
+        public LogLevel logLevel { get; set; } = LogLevel.Info;
+        public Boolean AsyncMode { get; set; } = false;
 
         private static readonly string FolderPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
